@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smc2bj"
+version = "0.1.0"
+description = "SMC² + rolling-window Bayesian estimation framework for SDE state-space models, with a guided-Kalman differentiable particle filter inner loop (GK-DPF v3-lite)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{name = "Ajay Talati"}]
+license = {text = "MIT"}
+dependencies = [
+  "jax>=0.4",
+  "jaxlib",
+  "blackjax>=1.2",
+  "numpy",
+  "pandas",
+  "scipy",
+  "matplotlib",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "pytest-cov"]
+
+[tool.setuptools.packages.find]
+include = ["smc2bj*", "models*"]
+exclude = ["tests*", "drivers*", "outputs*", "docs*"]
