@@ -10,6 +10,7 @@ build/
 .eggs/
 .pytest_cache/
 .coverage
+.hypothesis/
 
 # Generated run artifacts — but keep the curated reference outputs
 outputs/**/__pycache__/
