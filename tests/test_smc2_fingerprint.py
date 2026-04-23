@@ -37,12 +37,16 @@ FINGERPRINT = {
     'condition': 'C0',
     'windows': 1,
     'w0': {
-        # Filled in from outputs/.../C0_N256_s42/rolling_checkpoint.json after a
-        # verified parity run. Placeholders here; authoritative values in the
-        # NUMERICAL_FINGERPRINT.md table.
-        'coverage_min': 0.70,
-        'coverage_max': 1.00,
-    }
+        # Reference: refactored run on 2026-04-23 (commit 88f4461)
+        # vs pre-refactor W1 checkpoint. Bit-exact coverage match (100%).
+        # Tolerance band allows XLA/JIT scheduling variance.
+        'coverage_exact': 1.0,
+        'coverage_informed_min': 0.90,
+        'n_temp_min': 25,
+        'n_temp_max': 50,
+        'elapsed_min_s': 1100,
+        'elapsed_max_s': 1700,
+    },
 }
 
 
@@ -71,4 +75,14 @@ def test_fingerprint_cold_start_one_window():
     assert cp['config']['n_pf'] == 400
     assert len(cp['windows']) == 1
     w0 = cp['windows'][0]
-    assert FINGERPRINT['w0']['coverage_min'] <= w0['coverage'] <= FINGERPRINT['w0']['coverage_max']
+    # Coverage is bit-exact on the reference; require within 2 params
+    # (≈6pp) of the 100% target to absorb XLA variance.
+    assert w0['coverage'] >= 31 / 33, (
+        f"coverage {w0['coverage']:.4f} fell below 31/33")
+    assert w0['coverage_informed'] >= FINGERPRINT['w0']['coverage_informed_min']
+    assert (FINGERPRINT['w0']['n_temp_min']
+            <= w0['n_temp_steps']
+            <= FINGERPRINT['w0']['n_temp_max'])
+    assert (FINGERPRINT['w0']['elapsed_min_s']
+            <= w0['elapsed_s']
+            <= FINGERPRINT['w0']['elapsed_max_s'])
