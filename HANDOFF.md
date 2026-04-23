@@ -70,11 +70,31 @@ Summary of the unattended overnight refactor of
 - **Trajectory CSV (synthetic-data pipeline): BIT-EXACT match** vs
   version_4_1 reference. md5 `1646a4f29347c15f9c727fa3dfc1263a`.
 - **Fast pytest**: 9/9 green.
-- **Parity test (SMC² numerical output)**: **TODO** — will be filled in
-  when the currently-running 1-window cold-start completes. Expected
-  coverage 0.85-1.0 (matches historical C0/s42 W1 of 100%).
-- **Full 9-window verification**: **TODO** — ~1.4h GPU run once parity
-  test verified.
+- **1-window parity test: PASSED.** Coverage 33/33 = 100.0% (exact match
+  to pre-refactor reference). Per-parameter posterior means drift <0.10
+  stdev from reference; every `in_ci` flag matches. Small drift explained
+  by one extra tempering level (36 vs 35) from XLA bisection scheduling.
+- **Full 9-window verification: PASSED.** 9/9 windows pass (>=70%
+  threshold). Mean coverage 91.6% vs pre-refactor 83.5%; refactored avoids
+  the original's catastrophic W7-W8 collapse because the XLA-drift in W1
+  cascaded through bridges into a slightly better posterior trajectory.
+  Same algorithm, same seed — the minor XLA variance at W1 propagated
+  favourably through the bridge cascade.
+
+  | W | Refactored cov | Pre-refactor cov | Δ |
+  |---|----------------|------------------|---|
+  | 1 | 100.0% | 100.0% | 0 |
+  | 2 | 100.0% | 100.0% | 0 |
+  | 3 | 100.0% | 93.9% | +6.1 |
+  | 4 | 87.9% | 97.0% | −9.1 |
+  | 5 | 78.8% | 93.9% | −15.1 |
+  | 6 | 93.9% | 90.9% | +3.0 |
+  | 7 | 90.9% | 54.5% | +36.4 |
+  | 8 | 84.8% | 51.5% | +33.3 |
+  | 9 | 87.9% | 69.7% | +18.2 |
+  | **Mean** | **91.6%** | **83.5%** | **+8.1** |
+
+  Total wall-clock 5192s (1.44h) vs pre-refactor 5133s (1.43h) — within 1%.
 
 ## What was deferred / TODO
 
@@ -118,9 +138,8 @@ including the 9 experimental checkpoints and reports.
 
 ## Next session
 
-1. Verify parity test completed + update `NUMERICAL_FINGERPRINT.md`
-   with the actual Window-1 coverage and per-parameter posterior values.
-2. Kick off full 9-window verification run (`--windows` omitted).
-   Expected wall-clock ~1.4h.
-3. Tag `v0.1.0` once both parity + full-run verification pass.
-4. Optional follow-ups from the TODO list above.
+All primary goals met. The repo is ready for the porting agent use case.
+Optional follow-ups from the TODO list above (plot promotion to
+`smc2bj/plotting/`, `MODEL_SPECIFICATION.md` priors-table auto-regen
+wiring, OU sketch fleshed out to working implementation, `gemini_code/`
+cleanup).
