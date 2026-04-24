@@ -144,21 +144,21 @@ and $\theta$.
 
 ### 4.1 Channel 1 — Resting heart rate (mean-centered)
 
-The most identifiability-sensitive channel. Mean-centered within each rolling
-window to remove $R_{\text{base}}$, and reparameterised via a ratio to break
-the $(B, F)$ collinearity that kills $\kappa_{\text{vagal}}$ / $\kappa_{\text{chronic}}$
-identifiability.
+The most identifiability-sensitive channel. To break the $(B, F)$
+collinearity that kills $\kappa_{\text{vagal}}$ / $\kappa_{\text{chronic}}$
+joint identifiability, v4.1 applies **two identifiability fixes**:
 
-**Internal reparameterisation:**
+1. **Mean-center RHR within each rolling window.** Removes $R_{\text{base}}$
+   from the estimation block (it's a nuisance intercept whose value drifts
+   over years of real data anyway). `align_obs_fn` subtracts the rolling
+   mean before the PF sees the data.
+2. **Freeze $\kappa_{\text{chronic}} = 10.0$.** After freezing $R_{\text{base}}$,
+   $\kappa_{\text{vagal}}$ and $\kappa_{\text{chronic}}$ are still structurally
+   non-identifiable jointly (they appear as a linear combination in a single
+   channel's mean); fixing $\kappa_{\text{chronic}}$ makes $\kappa_{\text{vagal}}$
+   uniquely identifiable.
 
-$$
-\kappa_{\text{chronic}} = \frac{\kappa_{\text{total}}}{1 + \kappa_{\text{ratio}}}, \qquad
-\kappa_{\text{vagal}}   = \kappa_{\text{ratio}} \cdot \kappa_{\text{chronic}}
-$$
-
-so only $\kappa_{\text{ratio}}$ and $\kappa_{\text{total}}$ are estimated;
-$\kappa_{\text{chronic}}$ is further **frozen at 10.0** to eliminate the last
-residual collinearity. The observation equation, after mean-centering per window:
+The observation equation, after mean-centering per window:
 
 $$
 \mathrm{RHR}_{\text{centered}}(t) \sim
@@ -168,7 +168,9 @@ $$
 
 Mean-centering is a **per-window operation**, applied inside
 `align_obs_fn` (see [models/fsa_real_obs/estimation.py:490](../models/fsa_real_obs/estimation.py#L490)).
-It subtracts the rolling mean before the PF sees it.
+It subtracts the rolling mean before the PF sees it. $R_{\text{base}}$
+and $\kappa_{\text{chronic}}$ are `frozen_params` on the `EstimationModel`
+instance and do not appear in `PARAM_PRIOR_CONFIG`.
 
 ### 4.2 Channels 2-6
 
@@ -205,9 +207,51 @@ random at evaluation time — it's a deterministic function of `seed`.
 
 ## 6. Parameter vector $\theta \in \mathbb{R}^{33}$ and priors
 
-Source of truth: [models/fsa_real_obs/estimation.py:84](../models/fsa_real_obs/estimation.py#L84)
-(`PARAM_PRIOR_CONFIG`). Regenerate this table via
-`python tools/dump_model_spec.py` (TODO: script to be added).
+Source of truth: [models/fsa_real_obs/estimation.py](../models/fsa_real_obs/estimation.py#L84)
+(`PARAM_PRIOR_CONFIG`). The machine-generated table below is the
+authoritative numerical spec; the hand-written §6.1 / §6.2 tables that
+follow annotate the same information with semantic descriptions.
+
+<!-- AUTO-GENERATED-PRIORS-START -->
+<!-- regenerate via: python tools/dump_model_spec.py models.fsa_real_obs.estimation --update-docs -->
+
+| # | Parameter | Distribution | Location (constrained mean) | Scale |
+|---|-----------|--------------|------------------------------|-------|
+| 1 | `tau_B` | LogNormal | 14 | 0.08 (log-space) |
+| 2 | `alpha_A` | LogNormal | 1 | 0.4 (log-space) |
+| 3 | `tau_F` | LogNormal | 7 | 0.3 (log-space) |
+| 4 | `lambda_B` | LogNormal | 3 | 0.3 (log-space) |
+| 5 | `lambda_A` | LogNormal | 1.5 | 0.3 (log-space) |
+| 6 | `mu_0_abs` | LogNormal | 0.1 | 0.4 (log-space) |
+| 7 | `mu_B` | LogNormal | 0.3 | 0.4 (log-space) |
+| 8 | `mu_F` | LogNormal | 0.1 | 0.4 (log-space) |
+| 9 | `mu_FF` | LogNormal | 0.4 | 0.4 (log-space) |
+| 10 | `eta` | LogNormal | 0.2 | 0.3 (log-space) |
+| 11 | `kappa_vagal` | LogNormal | 12 | 0.3 (log-space) |
+| 12 | `sigma_obs_R` | LogNormal | 1.5 | 0.4 (log-space) |
+| 13 | `I_base` | Normal | 0.5 | 0.1 |
+| 14 | `c_B` | LogNormal | 0.2 | 0.5 (log-space) |
+| 15 | `c_F` | LogNormal | 0.1 | 0.5 (log-space) |
+| 16 | `sigma_obs_I` | LogNormal | 0.05 | 0.4 (log-space) |
+| 17 | `D_base` | Normal | 0.5 | 0.1 |
+| 18 | `d_B` | LogNormal | 0.3 | 0.5 (log-space) |
+| 19 | `d_F` | LogNormal | 0.2 | 0.5 (log-space) |
+| 20 | `sigma_obs_D` | LogNormal | 0.08 | 0.4 (log-space) |
+| 21 | `S_base` | Normal | 30 | 10 |
+| 22 | `s_A` | LogNormal | 15 | 0.5 (log-space) |
+| 23 | `s_F` | LogNormal | 20 | 0.5 (log-space) |
+| 24 | `sigma_obs_S` | LogNormal | 5 | 0.4 (log-space) |
+| 25 | `Sleep_base` | Normal | 0.5 | 0.1 |
+| 26 | `sl_A` | LogNormal | 0.2 | 0.5 (log-space) |
+| 27 | `sl_B` | LogNormal | 0.1 | 0.5 (log-space) |
+| 28 | `sl_F` | LogNormal | 0.2 | 0.5 (log-space) |
+| 29 | `sigma_obs_Sleep` | LogNormal | 0.1 | 0.4 (log-space) |
+| 30 | `Time_base` | Normal | 0 | 1 |
+| 31 | `t_A` | LogNormal | 1 | 0.5 (log-space) |
+| 32 | `t_F` | LogNormal | 0.5 | 0.5 (log-space) |
+| 33 | `sigma_obs_Time` | LogNormal | 0.5 | 0.4 (log-space) |
+
+<!-- AUTO-GENERATED-PRIORS-END -->
 
 ### 6.1 Dynamical parameters (10)
 
@@ -230,10 +274,10 @@ reconstructed via $\mu_0 = -\mu_{0,\text{abs}}$; see the driver's
 
 ### 6.2 Observational parameters (23)
 
-**RHR (3):** $\kappa_{\text{ratio}} \sim \text{LogN}(\ln 1.2, 0.20)$;
-$\kappa_{\text{total}} \sim \text{LogN}(\ln 22, 0.30)$;
+**RHR (2):** $\kappa_{\text{vagal}} \sim \text{LogN}(\ln 12, 0.3)$;
 $\sigma_{\text{obs},R} \sim \text{LogN}(\ln 1.5, 0.4)$.
-(*$\kappa_{\text{chronic}}$ and $R_{\text{base}}$ are frozen.*)
+(*$\kappa_{\text{chronic}}$ frozen at 10.0, $R_{\text{base}}$ frozen at 62.0;
+both appear in the forward model but are removed from the estimation block.*)
 
 **Intensity (4):** $I_{\text{base}} \sim \mathcal{N}(0.5, 0.1)$;
 $c_B \sim \text{LogN}(\ln 0.2, 0.5)$;

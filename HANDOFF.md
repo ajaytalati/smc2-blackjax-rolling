@@ -96,27 +96,54 @@ Summary of the unattended overnight refactor of
 
   Total wall-clock 5192s (1.44h) vs pre-refactor 5133s (1.43h) — within 1%.
 
-## What was deferred / TODO
+## Cleanup pass (2026-04-24, commit e6de3d3…)
 
-1. **Full 9-window verification run** is planned but not yet kicked off —
-   waiting for 1-window parity to complete and verify first.
-2. **`tools/dump_model_spec.py` auto-regeneration** is implemented but
-   its output is not yet embedded in `MODEL_SPECIFICATION.md` — that file
-   currently has the priors table hand-written. Next pass should embed
-   the output as a code fence with regen instructions.
-3. **Plot promotion**: `plot_parameter_tracking` and
-   `plot_coverage_and_timing` are currently in the FSA driver but are
-   fully model-generic; they could move to `smc2bj/plotting/` in a
-   follow-up pass to reduce per-model boilerplate.
-4. **`sim_plots.py` duplication**: `models/fsa_real_obs/sim_plots.py`
-   and the driver's own plot functions are non-overlapping (different
-   plots), but a naming cleanup might make the split more obvious.
-5. **`gemini_code/` subdirectory** in `models/fsa_real_obs/` is a
-   reference/historical script, not part of the 3-file convention.
-   Consider moving to `outputs/` or deleting.
-6. **D3 worked OU sketch** is a sketch, not a working implementation.
-   Creating `models/ou_2state/` + `drivers/ou_2state_rolling.py` and
-   running them end-to-end would validate the porting-guide contract.
+After the initial refactor, a second cleanup pass knocked out several
+small items flagged during review:
+
+- **SCENARIO dead code removed.** `SCENARIO = 'recovery'` at the top of
+  `drivers/fsa_real_obs_5yr_rolling.py` was a selector between three
+  entries in `FSA_REAL_OBS_MODEL.param_sets` that all pointed to the
+  same `DEFAULT_PARAMS` — a historical artifact. Driver now references
+  `param_sets['recovery']` directly with a comment explaining the dead
+  distinction.
+- **`models/fsa_real_obs/gemini_code/` archived** to
+  `outputs/historical_references/` with a README explaining its
+  status. Keeps `models/fsa_real_obs/` clean (3 files + `__init__.py`)
+  so the porting contract is visually obvious.
+- **Priors-table auto-regeneration wired.** `tools/dump_model_spec.py`
+  now has an `--update-docs` flag that rewrites a marker-delimited
+  block inside `docs/MODEL_SPECIFICATION.md`. Doing so caught one
+  factual bug in the hand-written §4.1: I had described a `κ_ratio`/
+  `κ_total` reparameterisation that doesn't exist in v4.1 code (the
+  actual design is `κ_vagal` estimated directly, `κ_chronic` and
+  `R_base` frozen). Fixed.
+- **`plot_parameter_tracking` + `plot_coverage_and_timing` promoted**
+  to `smc2bj/plotting/rolling.py`. They don't reference any FSA
+  concept — driver now imports them. Model-specific plots
+  (`plot_latent_reconstruction`, `plot_macrocycle_schedule`,
+  `plot_observations_with_missing`) stay in the driver. Driver went
+  from ~700 lines to 639.
+
+## What remains deferred
+
+1. **`sim_plots.py` naming cleanup** — lowest priority. No duplication
+   between `models/fsa_real_obs/sim_plots.py` (proof-of-principle
+   diagnostics) and the driver's model-specific plots (rolling-SMC
+   reconstruction). Names differ, usage is clear. Skipped unless
+   there's a specific reason.
+2. **D3 worked OU sketch** remains a sketch, not a working
+   implementation. Creating `models/ou_2state/` +
+   `drivers/ou_2state_rolling.py` and running them end-to-end would
+   validate the porting-guide contract. Estimated 4-6h; best done
+   when a real second model needs porting.
+3. **Upstream `param_sets` collapse.** All three scenarios in
+   `models/fsa_real_obs/simulation.py` point to `DEFAULT_PARAMS`. Could
+   either (a) collapse to a single `{'default': DEFAULT_PARAMS}` entry,
+   or (b) populate distinct `sedentary_params` / `overtraining_params`
+   dicts if the three regimes are meant to be real alternatives. Left
+   untouched in this pass — no effect on the driver after the
+   SCENARIO removal.
 
 ## Known caveats
 
