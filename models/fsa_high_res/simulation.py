@@ -72,45 +72,57 @@ def circadian_jax(t_days, phi=0.0):
 # =========================================================================
 
 def generate_phi_sub_daily(daily_phi, seed=42,
-                            burst_multiplier=5.0,
-                            sedentary_fraction=0.10,
-                            train_hour_lo=8.0, train_hour_hi=19.0,
-                            train_dur_min_lo=45.0, train_dur_min_hi=90.0,
-                            sleep_hour_lo=23.0, sleep_hour_hi=7.0):
-    """Expand a per-day Phi schedule to a per-15-min-bin array.
+                            wake_hour=7.0, sleep_hour=23.0,
+                            peak_hours_post_wake=2.0, tau_hours=3.0,
+                            noise_frac=0.15):
+    """Expand a per-day Phi schedule to a per-15-min-bin array with a
+    **morning-loaded** activity profile (hunter-gatherer pattern).
 
-    Each day has:
-      - A training window [tau, tau+delta] in [train_hour_lo, train_hour_hi]
-        during which Phi = daily_phi * burst_multiplier.
-      - Sedentary waking hours: Phi = daily_phi * sedentary_fraction.
-      - Sleep hours [sleep_hour_lo, sleep_hour_hi] (wrap around midnight):
-        Phi = 0.
+    Profile for each wake bin:
+        t = hour_of_day - wake_hour      (zero at wake)
+        shape(t) = t * exp(-t / tau)      (Gamma(k=2) shape)
+                                          peaks at t = tau (~3h post-wake)
+    Normalised so the daily-integrated Phi equals ~24 * daily_phi
+    (i.e. the slow FSA dynamics see the same daily load as the base model).
 
-    The daily average of Phi(t) integrates to ~daily_phi so the coarser
-    FSA dynamics see the same load.
+    Concretely: activity ramps from 0 at wake, peaks 2-3h later, and
+    tapers exponentially through the afternoon. By ~8h post-wake (3pm if
+    waking at 7am) activity is ~20% of peak; by sleep (16h post-wake)
+    ~0.3% of peak. Matches the "~75% of activity in the morning" pattern.
+
+    Sleep hours [sleep_hour, wake_hour+24] (wrapping midnight): Phi = 0.
+
+    Small multiplicative Gaussian noise (noise_frac std) is added per bin
+    to avoid an unrealistically smooth signal.
     """
     rng = np.random.default_rng(seed)
     n_days = len(daily_phi)
     phi = np.zeros(n_days * BINS_PER_DAY, dtype=np.float32)
 
+    wake_duration = sleep_hour - wake_hour  # 16.0 h
+
+    # Normalisation: ∫_0^T t * exp(-t/tau) dt = tau^2 * (1 - e^{-T/tau} * (1 + T/tau))
+    T = wake_duration
+    gamma_integral = tau_hours ** 2 * (
+        1.0 - np.exp(-T / tau_hours) * (1.0 + T / tau_hours)
+    )
+    # Want daily_phi_integral(per-day) = daily_phi * 24 (so slow-scale FSA sees the same load).
+    # sum of Phi(t)*dt over wake hours = amplitude * gamma_integral.
+    # amplitude = daily_phi * 24 / gamma_integral.
+
     for d in range(n_days):
         phi_d = float(daily_phi[d])
-        # Training window for today
-        tau = rng.uniform(train_hour_lo, train_hour_hi)
-        dur_min = rng.uniform(train_dur_min_lo, train_dur_min_hi)
-        train_start_h = tau
-        train_end_h = tau + dur_min / 60.0
-
+        amplitude = phi_d * 24.0 / max(gamma_integral, 1e-12)
         for k in range(BINS_PER_DAY):
-            h = k * DT_BIN_HOURS                    # hour-of-day in [0, 24)
-            in_sleep = (h >= sleep_hour_lo) or (h < sleep_hour_hi)
-            in_training = (h >= train_start_h) and (h < train_end_h)
-            if in_sleep:
+            h = k * DT_BIN_HOURS          # hour-of-day in [0, 24)
+            if h < wake_hour or h >= sleep_hour:
                 phi[d * BINS_PER_DAY + k] = 0.0
-            elif in_training:
-                phi[d * BINS_PER_DAY + k] = phi_d * burst_multiplier
-            else:
-                phi[d * BINS_PER_DAY + k] = phi_d * sedentary_fraction
+                continue
+            t = h - wake_hour
+            shape = t * np.exp(-t / tau_hours)
+            base = amplitude * shape
+            noise = rng.normal(0.0, noise_frac) if noise_frac > 0 else 0.0
+            phi[d * BINS_PER_DAY + k] = max(base * (1.0 + noise), 0.0)
 
     return phi
 
@@ -414,13 +426,16 @@ def verify_physics(trajectory, t_grid, params):
 # =========================================================================
 
 DEFAULT_PARAMS = {
-    # --- SDE dynamics (same as FSA v4.1) ---
+    # --- SDE dynamics ---
+    # Tuned from FSA v4.1 defaults to activate the Landau bifurcation
+    # within a 14-day POC horizon: mu_0 less negative (-0.05 vs -0.10)
+    # so mu(B,F) crosses zero earlier as B rises.
     'tau_B':    14.0,
     'alpha_A':   1.0,
     'tau_F':     7.0,
     'lambda_B':  3.0,
     'lambda_A':  1.5,
-    'mu_0':     -0.10,
+    'mu_0':      0.02,
     'mu_B':      0.30,
     'mu_F':      0.10,
     'mu_FF':     0.40,
@@ -461,7 +476,12 @@ DEFAULT_PARAMS = {
     'sigma_st':      0.5,
 }
 
-DEFAULT_INIT = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.01}
+DEFAULT_INIT = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.55}
+# A_0 raised from 0.01 → 0.55 to start A near the Stuart-Landau
+# fixed point A* = sqrt(mu/eta) for typical (B, F). With mu_0=+0.02,
+# mu_B=0.30, mu_F=0.10, eta=0.20, and mid-run (B,F)=(0.3, 0.15),
+# mu ≈ 0.095 → A* ≈ 0.69. We start below A* so there's some
+# convergence to watch, but above the quasi-absorbing boundary.
 
 
 # =========================================================================

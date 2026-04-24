@@ -92,7 +92,10 @@ PARAM_PRIOR_CONFIG = OrderedDict([
 ])
 
 INIT_STATE_PRIOR_CONFIG = OrderedDict()
-COLD_START_INIT = jnp.array([0.05, 0.10, 0.01])
+# A_0 raised to 0.55 — starts A near the Stuart-Landau fixed point
+# A* = sqrt(mu/eta) for typical (B,F) where mu > 0. Matches
+# DEFAULT_INIT in simulation.py.
+COLD_START_INIT = jnp.array([0.05, 0.10, 0.55])
 
 _PK = list(PARAM_PRIOR_CONFIG.keys())
 _PI = {k: i for i, k in enumerate(_PK)}

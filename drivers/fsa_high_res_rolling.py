@@ -319,7 +319,7 @@ def main():
 
     # Step 2: Forward simulate
     print(f"\nStep 2: Forward simulate ({N_SUBSTEPS} substeps/bin)")
-    init = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.01}
+    init = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.55}
     t0 = time.time()
     trajectory = simulate_sde_high_res(T_B_arr, Phi_arr, true_params, init,
                                         n_substeps=N_SUBSTEPS, seed=args.seed)
