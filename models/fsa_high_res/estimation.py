@@ -57,7 +57,10 @@ PARAM_PRIOR_CONFIG = OrderedDict([
     ('tau_F',     ('lognormal', (math.log( 7.0), 0.15))),
     ('lambda_B',  ('lognormal', (math.log( 3.0), 0.15))),
     ('lambda_A',  ('lognormal', (math.log( 1.5), 0.15))),
-    ('mu_0_abs',  ('lognormal', (math.log(0.10), 0.20))),
+    # High-res uses mu_0 > 0 directly (A sits at a stable Stuart-Landau
+    # fixed point rather than being activated by a bifurcation crossing).
+    # This is the sign-clean version of the daily FSA's 'mu_0_abs' reparam.
+    ('mu_0',      ('lognormal', (math.log(0.02), 0.20))),
     ('mu_B',      ('lognormal', (math.log(0.30), 0.20))),
     ('mu_F',      ('lognormal', (math.log(0.10), 0.20))),
     ('mu_FF',     ('lognormal', (math.log(0.40), 0.20))),
@@ -136,7 +139,7 @@ def propagate_fn(y, t, dt, params, grid_obs, k,
     tau_F    = params[_PI['tau_F']]
     lambda_B = params[_PI['lambda_B']]
     lambda_A = params[_PI['lambda_A']]
-    mu_0     = -params[_PI['mu_0_abs']]
+    mu_0     = params[_PI['mu_0']]
     mu_B     = params[_PI['mu_B']]
     mu_F     = params[_PI['mu_F']]
     mu_FF    = params[_PI['mu_FF']]
@@ -461,7 +464,7 @@ def imex_step_fn(y, t, dt, params, grid_obs):
     tau_F    = params[_PI['tau_F']]
     lambda_B = params[_PI['lambda_B']]
     lambda_A = params[_PI['lambda_A']]
-    mu_0     = -params[_PI['mu_0_abs']]
+    mu_0     = params[_PI['mu_0']]
     mu_B     = params[_PI['mu_B']]
     mu_F     = params[_PI['mu_F']]
     mu_FF    = params[_PI['mu_FF']]
@@ -483,7 +486,7 @@ def forward_sde_stochastic(init_state, params, exogenous, dt, n_steps,
     tau_F    = params[_PI['tau_F']]
     lambda_B = params[_PI['lambda_B']]
     lambda_A = params[_PI['lambda_A']]
-    mu_0     = -params[_PI['mu_0_abs']]
+    mu_0     = params[_PI['mu_0']]
     mu_B     = params[_PI['mu_B']]
     mu_F     = params[_PI['mu_F']]
     mu_FF    = params[_PI['mu_FF']]

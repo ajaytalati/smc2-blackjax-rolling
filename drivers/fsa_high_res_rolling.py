@@ -156,8 +156,8 @@ def apply_missing_data_high_res(obs_data, seed=42, dropout_rate=0.05):
 
 def _truth_dict(true_params):
     d = dict(true_params)
-    d['mu_0_abs'] = abs(true_params['mu_0'])
-    d.pop('mu_0', None)
+    # high-res PARAM_PRIOR_CONFIG uses mu_0 directly (positive lognormal prior).
+    # This is the sign-clean version of the daily FSA's mu_0_abs reparam.
     d.pop('sigma_B', None)
     d.pop('sigma_F', None)
     d.pop('sigma_A', None)

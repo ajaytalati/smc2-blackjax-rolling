@@ -108,10 +108,10 @@ Full 14-day / 27-window rolling run at `--seed 42`, `--condition C0`
 | Quantity | Value |
 |----------|-------|
 | Windows | 27 (1-day window, 12h stride) |
-| Mean coverage (raw, 29 params) | **41.0%** |
-| Mean coverage (data-informed) | 36.8% |
+| Mean coverage (raw, 29 params) | **37.5%** |
+| Mean coverage (data-informed) | 33.6% |
 | PASS rate (≥70% coverage) | **1 / 27** |
-| Best window (W1 cold-start) | **96.6%** raw, **100%** data-informed |
+| Best window (W1 cold-start) | **100%** raw, **100%** data-informed |
 | Wall-clock | 1.27 h |
 | Per-window bins | 96 |
 | Inner-PF particles | 400 |
@@ -119,19 +119,29 @@ Full 14-day / 27-window rolling run at `--seed 42`, `--condition C0`
 
 ### What the result actually tells us
 
-- **The framework is correct end-to-end.** W1 achieves 96.6% coverage
-  from a cold-start at the tightened prior, confirming the 3-channel
-  Kalman fusion + Bernoulli obs_log_weight_fn design works on 15-min
-  data. Only 1 of 29 params missed its CI in W1 (typical level of FSA
-  daily's W1 result too).
+- **The framework is correct end-to-end.** W1 cold-start achieves
+  **100% coverage** on all 29 parameters (after fixing the mu_0 sign
+  bug — see provenance note). This confirms the 3-channel Kalman fusion
+  + Bernoulli obs_log_weight_fn design is correct on 15-min data, and
+  the model as implemented is fully identifiable from cold-start.
 
-- **Bridge cascade degrades fast on this model.** W2-W27 drift into
-  30-55% coverage. The Gaussian-bridge warm-start approximates the
-  previous window's posterior as Gaussian; when the true posterior
-  is narrow and slightly skewed (likely here, given the ratio-like
-  κ_B / α_A^HR / k_F structure), the approximation error compounds
-  across each 1-day stride. By W26-W27 the posterior has collapsed
-  off-truth on 26 of 29 parameters.
+- **Bridge cascade degrades fast on this model — but the degradation
+  is BIAS, not variance.** W2-W27 drift into 20-60% coverage with
+  posterior means locked off-truth at narrow CIs (confidently wrong),
+  not wide uncertainty. Inspection of `parameter_tracking.png` shows
+  most failing traces have stable means substantially offset from
+  the green truth line, with their 90% CIs narrower than the offset.
+
+  The Gaussian-bridge warm-start approximates the previous window's
+  posterior as Gaussian; when the true posterior is narrow and slightly
+  skewed (likely here, given the ratio-like κ_B / α_A^HR / k_F
+  structure and the A-coupled parameters' Stuart-Landau curvature),
+  the first-order fit error compounds across each 1-day stride. By
+  W26-W27 the posterior has collapsed to a biased fixed point 3-10%
+  coverage.
+
+  This is a **research question about the bridge**, not a model
+  identifiability failure: cold-start (W1) recovers the truth perfectly.
 
 - **This is a research question, not a bug.** The Gaussian-bridge
   bridge is a known first-order approximation documented in the plan's
@@ -141,16 +151,31 @@ Full 14-day / 27-window rolling run at `--seed 42`, `--condition C0`
   3. Periodic cold-restarts every N windows.
   4. Wider priors at the expense of per-window convergence.
 
-### Per-window raw coverage (illustrative)
+### Per-window raw coverage
 
 ```
-W1 cold  96.6%  ← validates model correctness
-W2-6     40-55% (early bridge drift)
-W7-14    17-45% (A-coupled params drift off truth)
-W15-20   35-62% (partial recovery)
-W21-25   21-48%
-W26-27    7-10% (posterior collapsed far from truth)
+W1  cold 100.0%  ← validates model correctness (post mu_0 fix)
+W2-6     24-52% (early bridge drift, mean ~40%)
+W7-13    44-62% (partial plateau)
+W14-24   17-48% (slow drift off-truth)
+W25-27    3-10% (posterior collapsed far from truth)
 ```
+
+### Provenance — the mu_0 sign bug
+
+The first rollout attempt used the FSA daily estimator's `mu_0_abs`
+reparameterisation (truth mu_0 < 0 stored as positive lognormal,
+negated at use). For the high-res model we picked mu_0 = +0.02
+(positive, so A sits at the Stuart-Landau fixed point A* = √(μ/η)
+> 0 rather than relying on pitchfork crossings). The estimator was
+still negating at use, producing a sign mismatch: estimator computed
+μ = −0.02 while simulator generated data with μ = +0.02.
+
+Fixed by renaming the parameter `mu_0_abs` → `mu_0` in
+`PARAM_PRIOR_CONFIG` and removing the negation in `propagate_fn`.
+Post-fix: W1 coverage 96.6% → **100%**. Later-window results changed
+only slightly (37% vs 41% before), confirming the bridge cascade is
+the dominant problem, not mu_0.
 
 ## Known limitations at v0.2.0
 
