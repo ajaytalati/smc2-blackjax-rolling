@@ -216,9 +216,14 @@ def rolling_window_smc(
         # Store for next window's bridge
         prev_particles = particles
 
-        # Extract smoothed latent state at t=stride for next window's PF init
+        # Extract smoothed latent state at t=stride for next window's PF init.
+        # stride_days is in step-index units (matches the t_idx unit of obs_data,
+        # e.g. days for daily FSA or 15-min bins for high-res FSA). The earlier
+        # "/ dt" was only correct when the unit coincided with "days per step",
+        # which only holds when dt=1.0. Now we assume stride_days is always in
+        # step-index units.
         n_extract = min(10, n_smc)
-        target_step = int(stride_days / dt)
+        target_step = int(stride_days)
         extracted_states = []
         for ei in range(n_extract):
             u_draw = jnp.array(particles[ei])

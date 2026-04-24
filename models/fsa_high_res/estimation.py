@@ -337,11 +337,12 @@ def obs_log_prob_fn(y, grid_obs, k, params):
 # ALIGN_OBS_FN — grid-align per-channel obs into JAX arrays
 # =========================================================================
 
-def align_obs_fn(obs_data, t_steps, dt_hours):
+def align_obs_fn(obs_data, t_steps, dt):
     """Align the 4 obs channels + T_B/Phi exogenous + precomputed C(t).
 
-    t_steps : number of 15-min bins in the window.
-    dt_hours : bin width in hours (= 0.25). Also used to compute C(t_k).
+    t_steps : number of time-steps (bins) in the window.
+    dt      : bin width in **days** (consumed from rolling_cfg.dt). For the
+              15-min variant, dt = 1/96 day.
 
     Output keys:
       hr_value, hr_present
@@ -413,8 +414,8 @@ def align_obs_fn(obs_data, t_steps, dt_hours):
         Phi_val[:n] = raw[:n]
 
     # -- Circadian C(t) per bin (day units, phi frozen) --
-    dt_days = dt_hours / 24.0
-    t_days = np.arange(T, dtype=np.float32) * dt_days
+    # dt arg is in days (rolling_cfg.dt convention).
+    t_days = np.arange(T, dtype=np.float32) * float(dt)
     C_val = np.cos(2.0 * np.pi * t_days + PHI_FROZEN).astype(np.float32)
 
     has_any = np.maximum.reduce([hr_pres, s_pres, st_pres, sl_pres])
