@@ -33,6 +33,88 @@ from smc2bj.estimation.mass_matrix import estimate_mass_matrix
 from smc2bj.estimation.sampling import sample_from_prior
 
 
+def _kmeans_labels(X: np.ndarray, K: int, n_iter: int = 20,
+                   seed: int = 0) -> np.ndarray:
+    """Plain-numpy K-means (no sklearn dep). Returns cluster labels (N,)."""
+    rng = np.random.default_rng(seed)
+    N, d = X.shape
+    # k-means++ seeding: first centre random, others far from previous
+    centres = np.zeros((K, d))
+    centres[0] = X[rng.integers(N)]
+    for k in range(1, K):
+        dists = np.min(
+            np.linalg.norm(X[:, None, :] - centres[None, :k, :], axis=2) ** 2,
+            axis=1,
+        )
+        probs = dists / (dists.sum() + 1e-12)
+        centres[k] = X[rng.choice(N, p=probs)]
+    for _ in range(n_iter):
+        d2 = np.linalg.norm(
+            X[:, None, :] - centres[None, :, :], axis=2
+        ) ** 2
+        labels = np.argmin(d2, axis=1)
+        new_centres = np.array([
+            X[labels == k].mean(axis=0) if np.any(labels == k) else centres[k]
+            for k in range(K)
+        ])
+        if np.allclose(new_centres, centres):
+            break
+        centres = new_centres
+    return labels
+
+
+def _fit_mog_bridge(prev_particles: np.ndarray, K: int = 2, seed: int = 0):
+    """Fit a K-component mixture of Gaussians to `prev_particles`.
+
+    Each component is a full-covariance Gaussian with Ledoit-Wolf shrinkage
+    applied to its covariance. Weights are proportional to cluster size.
+
+    Returns:
+        weights : (K,) log-weights of components
+        mus     : (K, d)
+        L_chols : (K, d, d) Cholesky of each component's regularised cov
+        L_invs  : (K, d, d) inverse
+        log_dets: (K,) 2 * sum(log(diag(L_chol)))
+    """
+    N, d = prev_particles.shape
+    labels = _kmeans_labels(prev_particles, K=K, seed=seed)
+
+    mus = np.zeros((K, d))
+    L_chols = np.zeros((K, d, d))
+    L_invs = np.zeros((K, d, d))
+    log_dets = np.zeros(K)
+    log_weights = np.zeros(K)
+
+    for k in range(K):
+        members = prev_particles[labels == k]
+        n_k = len(members)
+        if n_k < 2:
+            # Fallback: fit component to full cloud with a wide eigenvalue floor
+            members = prev_particles
+            n_k = N
+        mu_k = members.mean(axis=0)
+        S_k = np.cov(members.T)
+        # LW shrinkage (per-component)
+        X_c = members - mu_k[None, :]
+        mu_target = float(np.trace(S_k) / d)
+        delta_mat = S_k - mu_target * np.eye(d)
+        delta_sq_sum = float((delta_mat ** 2).sum())
+        X2 = (X_c[:, :, None] * X_c[:, None, :])
+        b_bar = float(((X2 - S_k[None, :, :]) ** 2).sum() / (n_k * n_k))
+        alpha = min(b_bar / max(delta_sq_sum, 1e-10), 1.0)
+        cov_lw = (1.0 - alpha) * S_k + alpha * mu_target * np.eye(d)
+        cov_reg = cov_lw + 1e-4 * np.eye(d)
+        L = np.linalg.cholesky(cov_reg)
+        mus[k] = mu_k
+        L_chols[k] = L
+        # L_inv via triangular solve
+        L_invs[k] = np.linalg.solve(L, np.eye(d))
+        log_dets[k] = 2.0 * np.sum(np.log(np.diag(L)))
+        log_weights[k] = np.log(max(n_k / N, 1e-6))
+
+    return log_weights, mus, L_chols, L_invs, log_dets
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Cold-start
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,57 +219,104 @@ def run_smc_window(full_log_density, model, T_arr, cfg: SMCConfig,
 
 def run_smc_window_bridge(new_ld, prev_particles, model, T_arr,
                           cfg: SMCConfig, seed: int = 42):
-    """Bridge tempered SMC: Gaussian base measure → new posterior.
+    """Bridge tempered SMC: Gaussian / MoG base measure → new posterior.
 
     Data-annealing bridge (tempered SMC²):
-      logprior_fn(u)      = log N(u; mu_hat, Sigma_hat_LW)   [Gaussian fit]
+      logprior_fn(u)      = log q_0(u)                       [base fit of prev post]
       loglikelihood_fn(u) = new_ld(u) - logprior_fn(u)       [1 PF eval]
 
-    At lambda=0 the target is N(mu_hat, Sigma_hat) ~ old posterior
-    (where particles start). At lambda=1 the target is new_ld(u) =
-    correct new-window posterior. Uses Ledoit-Wolf shrinkage for
-    stable covariance estimation.
+    At lambda=0 the target is q_0 ≈ old posterior (where particles start).
+    At lambda=1 the target is new_ld(u) = correct new-window posterior.
+
+    Two base-measure options (cfg.bridge_type):
+      - 'gaussian': single Gaussian fit with Ledoit-Wolf shrinkage (default)
+      - 'mog':      K-component mixture of Gaussians, K = cfg.bridge_mog_components.
+                    Each component full-covariance with per-component LW shrinkage.
+                    Weights proportional to K-means cluster sizes.
     """
-    prev = jnp.array(prev_particles, dtype=jnp.float64)
-    N, d = prev.shape
+    prev_np = np.asarray(prev_particles, dtype=np.float64)
+    N, d = prev_np.shape
 
-    mu = jnp.mean(prev, axis=0)
-    S = jnp.cov(prev.T)
+    if cfg.bridge_type == 'mog':
+        K = int(cfg.bridge_mog_components)
+        log_w_np, mus_np, L_chols_np, L_invs_np, log_dets_np = _fit_mog_bridge(
+            prev_np, K=K, seed=seed,
+        )
+        log_w = jnp.asarray(log_w_np, dtype=jnp.float64)
+        mus = jnp.asarray(mus_np, dtype=jnp.float64)
+        L_chols = jnp.asarray(L_chols_np, dtype=jnp.float64)
+        L_invs = jnp.asarray(L_invs_np, dtype=jnp.float64)
+        log_dets = jnp.asarray(log_dets_np, dtype=jnp.float64)
 
-    # Ledoit-Wolf optimal shrinkage (Ledoit & Wolf 2004, Eq. 2)
-    X_c = prev - mu[None, :]
-    mu_target = jnp.trace(S) / d
-    delta_mat = S - mu_target * jnp.eye(d)
-    delta_sq_sum = jnp.sum(delta_mat ** 2)
-    X2 = (X_c[:, :, None] * X_c[:, None, :])
-    b_bar = jnp.sum((X2 - S[None, :, :]) ** 2) / (N * N)
-    alpha = min(float(b_bar / jnp.maximum(delta_sq_sum, 1e-10)), 1.0)
+        const_vec = -0.5 * (d * jnp.log(2.0 * jnp.pi) + log_dets)  # (K,)
 
-    cov_lw = (1.0 - alpha) * S + alpha * mu_target * jnp.eye(d)
-    cov_reg = cov_lw + 1e-4 * jnp.eye(d)
-    L_chol = jnp.linalg.cholesky(cov_reg)
-    L_inv = jax.scipy.linalg.solve_triangular(
-        L_chol, jnp.eye(d), lower=True)
-    log_det = 2.0 * jnp.sum(jnp.log(jnp.diag(L_chol)))
-    const = -0.5 * (d * jnp.log(2.0 * jnp.pi) + log_det)
+        print(f"      MoG base: K={K}  cluster sizes≈{np.exp(log_w_np) * N}  "
+              f"log_dets={[f'{x:.1f}' for x in log_dets_np]}", flush=True)
 
-    print(f"      Gaussian base: LW shrinkage={alpha:.3f}, "
-          f"log_det={float(log_det):.1f}", flush=True)
+        @jax.jit
+        def logprior_fn(u):
+            # log-sum-exp over K components, each log N(u; mu_k, L_k L_k^T)
+            diffs = u[None, :] - mus         # (K, d)
+            # (L_inv diff) per component
+            whit = jnp.einsum('kij,kj->ki', L_invs, diffs)  # (K, d)
+            maha = jnp.sum(whit ** 2, axis=-1)              # (K,)
+            comp_logps = const_vec - 0.5 * maha             # (K,)
+            return jax.scipy.special.logsumexp(log_w + comp_logps)
 
-    @jax.jit
-    def logprior_fn(u):
-        diff = u - mu
-        maha = jnp.sum((L_inv @ diff) ** 2)
-        return const - 0.5 * maha
+        # Sample initial particles from the mixture: pick component per
+        # particle by the component weights, then Gaussian conditional.
+        init_key = jax.random.PRNGKey(seed)
+        k_key, z_key = jax.random.split(init_key)
+        n_smc = cfg.n_smc_particles
+        comp_ids = jax.random.categorical(
+            k_key, log_w, shape=(n_smc,),
+        )  # (n_smc,) integers in [0, K)
+        z = jax.random.normal(z_key, (n_smc, d), dtype=jnp.float64)
+        # For each particle i, sample from N(mus[k_i], L_chols[k_i])
+        L_picked = L_chols[comp_ids]           # (n_smc, d, d)
+        mu_picked = mus[comp_ids]              # (n_smc, d)
+        initial_particles = mu_picked + jnp.einsum(
+            'nij,nj->ni', L_picked, z)
+    else:
+        # Single Gaussian with Ledoit-Wolf shrinkage
+        prev = jnp.array(prev_particles, dtype=jnp.float64)
+        mu = jnp.mean(prev, axis=0)
+        S = jnp.cov(prev.T)
+
+        # Ledoit-Wolf optimal shrinkage (Ledoit & Wolf 2004, Eq. 2)
+        X_c = prev - mu[None, :]
+        mu_target = jnp.trace(S) / d
+        delta_mat = S - mu_target * jnp.eye(d)
+        delta_sq_sum = jnp.sum(delta_mat ** 2)
+        X2 = (X_c[:, :, None] * X_c[:, None, :])
+        b_bar = jnp.sum((X2 - S[None, :, :]) ** 2) / (N * N)
+        alpha = min(float(b_bar / jnp.maximum(delta_sq_sum, 1e-10)), 1.0)
+
+        cov_lw = (1.0 - alpha) * S + alpha * mu_target * jnp.eye(d)
+        cov_reg = cov_lw + 1e-4 * jnp.eye(d)
+        L_chol = jnp.linalg.cholesky(cov_reg)
+        L_inv = jax.scipy.linalg.solve_triangular(
+            L_chol, jnp.eye(d), lower=True)
+        log_det = 2.0 * jnp.sum(jnp.log(jnp.diag(L_chol)))
+        const = -0.5 * (d * jnp.log(2.0 * jnp.pi) + log_det)
+
+        print(f"      Gaussian base: LW shrinkage={alpha:.3f}, "
+              f"log_det={float(log_det):.1f}", flush=True)
+
+        @jax.jit
+        def logprior_fn(u):
+            diff = u - mu
+            maha = jnp.sum((L_inv @ diff) ** 2)
+            return const - 0.5 * maha
+
+        init_key = jax.random.PRNGKey(seed)
+        z = jax.random.normal(init_key, (cfg.n_smc_particles, d),
+                              dtype=jnp.float64)
+        initial_particles = mu[None, :] + z @ L_chol.T
 
     @jax.jit
     def loglikelihood_fn(u):
         return new_ld(u) - logprior_fn(u)
-
-    init_key = jax.random.PRNGKey(seed)
-    z = jax.random.normal(init_key, (cfg.n_smc_particles, d),
-                          dtype=jnp.float64)
-    initial_particles = mu[None, :] + z @ L_chol.T
 
     hmc_kernel = blackjax.mcmc.hmc.build_kernel()
     smc_kernel = tempered.build_kernel(

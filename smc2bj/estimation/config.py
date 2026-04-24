@@ -21,6 +21,9 @@ class SMCConfig:
     # Bridge (warm-start)
     num_mcmc_steps_bridge: int = 3
     max_lambda_inc_bridge: float = 0.10
+    bridge_type: str = 'gaussian'      # 'gaussian' (single Gaussian + LW shrinkage)
+                                       # or 'mog' (2- or 3-component Gaussian mixture)
+    bridge_mog_components: int = 2     # only used when bridge_type == 'mog'
 
     # HMC kernel
     hmc_step_size: float = 0.025

@@ -246,20 +246,28 @@ def _parse_args():
     p.add_argument('--n-smc', type=int, default=256)
     p.add_argument('--n-pf', type=int, default=400)
     p.add_argument('--windows', type=int, default=None,
-                   help='Max windows (None = full 12; 1 = fast parity test)')
+                   help='Max windows (None = full 27; 1 = fast parity test)')
+    p.add_argument('--bridge', choices=('gaussian', 'mog'),
+                   default='gaussian',
+                   help='Bridge base measure: single Gaussian (default) or '
+                        'K-component mixture of Gaussians')
+    p.add_argument('--bridge-K', type=int, default=2,
+                   help='K for --bridge mog (default 2)')
     p.add_argument('--sim-only', action='store_true')
     p.add_argument('--show-checkpoint', action='store_true')
     return p.parse_args()
 
 
-def _out_dir(seed: int, n_smc: int) -> str:
+def _out_dir(seed: int, n_smc: int, bridge_tag: str = '') -> str:
+    tag = f'_{bridge_tag}' if bridge_tag else ''
     return os.path.join('outputs', 'fsa_high_res_rolling',
-                        f'C0_N{n_smc}_s{seed}')
+                        f'C0_N{n_smc}_s{seed}{tag}')
 
 
 def main():
     args = _parse_args()
-    out_dir = _out_dir(args.seed, args.n_smc)
+    bridge_tag = '' if args.bridge == 'gaussian' else f'mog{args.bridge_K}'
+    out_dir = _out_dir(args.seed, args.n_smc, bridge_tag)
     os.makedirs(out_dir, exist_ok=True)
 
     if args.show_checkpoint:
@@ -281,6 +289,8 @@ def main():
         target_ess_frac=0.3,              # allow larger Δλ per level
         max_lambda_inc=0.10,
         max_lambda_inc_bridge=0.15,
+        bridge_type=args.bridge,
+        bridge_mog_components=args.bridge_K,
     )
     WINDOW_BINS = 1 * BINS_PER_DAY        # 96 bins = 1 day
     STRIDE_BINS = BINS_PER_DAY // 2       # 48 bins = 12 hours
