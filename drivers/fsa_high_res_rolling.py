@@ -270,12 +270,20 @@ def main():
     truth = _truth_dict(true_params)
     model = HIGH_RES_FSA_ESTIMATION
 
-    smc_cfg = SMCConfig(n_smc_particles=args.n_smc, n_pf_particles=args.n_pf)
-    # rolling.py treats window_days / stride_days / n_days_total as "step
-    # indices" matching the obs_data's t_idx unit. Our t_idx is bin index
-    # (15-min bins), so we pass those quantities in bins, not calendar days.
-    WINDOW_BINS = 3 * BINS_PER_DAY   # 288 bins = 3 days
-    STRIDE_BINS = 1 * BINS_PER_DAY   # 96 bins  = 1 day
+    # POC sizing: 1-day windows (96 bins) with 12-hour stride (48 bins).
+    # A 3-day window at 15-min resolution produces ~700 obs/window; with
+    # 29 params this gives a prior→posterior contrast too large for the
+    # adaptive-tempering ESS solver to bridge in feasible wall-clock.
+    # Tighter priors + smaller windows is the proof-of-principle setup.
+    smc_cfg = SMCConfig(
+        n_smc_particles=args.n_smc,
+        n_pf_particles=args.n_pf,
+        target_ess_frac=0.3,              # allow larger Δλ per level
+        max_lambda_inc=0.10,
+        max_lambda_inc_bridge=0.15,
+    )
+    WINDOW_BINS = 1 * BINS_PER_DAY        # 96 bins = 1 day
+    STRIDE_BINS = BINS_PER_DAY // 2       # 48 bins = 12 hours
     rolling_cfg = RollingConfig(
         window_days=WINDOW_BINS, stride_days=STRIDE_BINS, dt=DT,
         n_substeps=N_SUBSTEPS, max_windows=args.windows,

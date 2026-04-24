@@ -45,44 +45,50 @@ PHI_FROZEN     = 0.0  # circadian phase, 0 = healthy morning chronotype
 # =========================================================================
 
 PARAM_PRIOR_CONFIG = OrderedDict([
-    # --- SDE dynamics (same as FSA v4.1) ---
-    ('tau_B',     ('lognormal', (math.log(14.0), 0.08))),
-    ('alpha_A',   ('lognormal', (math.log( 1.0), 0.4))),
-    ('tau_F',     ('lognormal', (math.log( 7.0), 0.3))),
-    ('lambda_B',  ('lognormal', (math.log( 3.0), 0.3))),
-    ('lambda_A',  ('lognormal', (math.log( 1.5), 0.3))),
-    ('mu_0_abs',  ('lognormal', (math.log(0.10), 0.4))),
-    ('mu_B',      ('lognormal', (math.log(0.30), 0.4))),
-    ('mu_F',      ('lognormal', (math.log(0.10), 0.4))),
-    ('mu_FF',     ('lognormal', (math.log(0.40), 0.4))),
-    ('eta',       ('lognormal', (math.log(0.20), 0.3))),
+    # Priors TIGHTENED vs. what the daily FSA uses. Rationale: at 15-min
+    # resolution a 1-day window already carries ~60-90 informative obs,
+    # and the adaptive-tempering ESS solver picks tiny Δλ if the prior is
+    # too wide. These widths give the POC a tractable number of tempering
+    # levels while still leaving 3-5× room around the truth for the
+    # posterior to move.
+    # --- SDE dynamics ---
+    ('tau_B',     ('lognormal', (math.log(14.0), 0.05))),
+    ('alpha_A',   ('lognormal', (math.log( 1.0), 0.20))),
+    ('tau_F',     ('lognormal', (math.log( 7.0), 0.15))),
+    ('lambda_B',  ('lognormal', (math.log( 3.0), 0.15))),
+    ('lambda_A',  ('lognormal', (math.log( 1.5), 0.15))),
+    ('mu_0_abs',  ('lognormal', (math.log(0.10), 0.20))),
+    ('mu_B',      ('lognormal', (math.log(0.30), 0.20))),
+    ('mu_F',      ('lognormal', (math.log(0.10), 0.20))),
+    ('mu_FF',     ('lognormal', (math.log(0.40), 0.20))),
+    ('eta',       ('lognormal', (math.log(0.20), 0.15))),
 
     # --- Ch1: HR (sleep-gated, Gaussian) ---
-    ('HR_base',     ('normal',    (62.0, 5.0))),
-    ('kappa_B',     ('lognormal', (math.log(12.0), 0.3))),
-    ('alpha_A_HR',  ('lognormal', (math.log(3.0),  0.4))),
-    ('beta_C_HR',   ('normal',    (-2.5, 1.0))),
-    ('sigma_HR',    ('lognormal', (math.log(2.0), 0.4))),
+    ('HR_base',     ('normal',    (62.0, 2.0))),
+    ('kappa_B',     ('lognormal', (math.log(12.0), 0.15))),
+    ('alpha_A_HR',  ('lognormal', (math.log(3.0),  0.20))),
+    ('beta_C_HR',   ('normal',    (-2.5, 0.5))),
+    ('sigma_HR',    ('lognormal', (math.log(2.0), 0.20))),
 
     # --- Ch2: Sleep (Bernoulli) ---
-    ('k_C',         ('lognormal', (math.log(3.0), 0.3))),
-    ('k_A',         ('lognormal', (math.log(2.0), 0.5))),
-    ('c_tilde',     ('normal',    (0.5, 0.5))),
+    ('k_C',         ('lognormal', (math.log(3.0), 0.15))),
+    ('k_A',         ('lognormal', (math.log(2.0), 0.25))),
+    ('c_tilde',     ('normal',    (0.5, 0.25))),
 
     # --- Ch3: Stress (wake-gated, Gaussian) ---
-    ('S_base',      ('normal',    (30.0, 10.0))),
-    ('k_F',         ('lognormal', (math.log(20.0), 0.4))),
-    ('k_A_S',       ('lognormal', (math.log(8.0),  0.5))),
-    ('beta_C_S',    ('normal',    (-4.0, 2.0))),
-    ('sigma_S',     ('lognormal', (math.log(4.0), 0.4))),
+    ('S_base',      ('normal',    (30.0, 3.0))),
+    ('k_F',         ('lognormal', (math.log(20.0), 0.20))),
+    ('k_A_S',       ('lognormal', (math.log(8.0),  0.25))),
+    ('beta_C_S',    ('normal',    (-4.0, 0.8))),
+    ('sigma_S',     ('lognormal', (math.log(4.0), 0.20))),
 
     # --- Ch4: Steps (log-Gaussian, wake-gated) ---
-    ('mu_step0',    ('normal',    (5.5, 1.0))),
-    ('beta_B_st',   ('lognormal', (math.log(0.8), 0.4))),
-    ('beta_F_st',   ('lognormal', (math.log(0.5), 0.5))),
-    ('beta_A_st',   ('lognormal', (math.log(0.3), 0.5))),
-    ('beta_C_st',   ('normal',    (-0.8, 0.4))),
-    ('sigma_st',    ('lognormal', (math.log(0.5), 0.3))),
+    ('mu_step0',    ('normal',    (5.5, 0.3))),
+    ('beta_B_st',   ('lognormal', (math.log(0.8), 0.20))),
+    ('beta_F_st',   ('lognormal', (math.log(0.5), 0.25))),
+    ('beta_A_st',   ('lognormal', (math.log(0.3), 0.25))),
+    ('beta_C_st',   ('normal',    (-0.8, 0.2))),
+    ('sigma_st',    ('lognormal', (math.log(0.5), 0.15))),
 ])
 
 INIT_STATE_PRIOR_CONFIG = OrderedDict()
