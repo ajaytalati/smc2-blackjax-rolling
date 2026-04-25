@@ -102,46 +102,48 @@ healthy morning chronotype).
 
 ## Proof-of-principle run
 
-Full 14-day / 27-window rolling run at `--seed 42`, `--condition C0`
-(2026-04-24). See `outputs/fsa_high_res_rolling/C0_N256_s42/`.
+Full 14-day / 27-window rolling run at `--seed 42`, `--condition C0`,
+**after** the C(t) phase-alignment fix (see provenance below).
+See `outputs/fsa_high_res_rolling/C0_N256_s42/`.
 
 | Quantity | Value |
 |----------|-------|
 | Windows | 27 (1-day window, 12h stride) |
-| Mean coverage (raw, 29 params) | **37.5%** |
-| Mean coverage (data-informed) | 33.6% |
-| PASS rate (≥70% coverage) | **1 / 27** |
-| Best window (W1 cold-start) | **100%** raw, **100%** data-informed |
-| Wall-clock | 1.27 h |
+| Mean coverage (raw, 29 params) | **96.8%** |
+| Mean coverage (data-informed) | **92.2%** |
+| PASS rate (≥70% coverage) | **27 / 27** |
+| Min window coverage | 86.2% (W3) |
+| Wall-clock | 1.24 h |
 | Per-window bins | 96 |
 | Inner-PF particles | 400 |
 | SMC particles | 256 |
 
+**Pass criterion (≥70% mean) decisively cleared by 22 percentage points.**
+Every one of the 27 windows individually passes; minimum window coverage
+is 86.2%. The high-res framework is fully validated end-to-end with
+mixed Gaussian + Bernoulli observations, sequential-scalar Kalman fusion
+across 3 Gaussian channels, deterministic circadian forcing, and
+sub-daily exogenous Φ — all on top of a single-Gaussian Ledoit-Wolf
+bridge with N_SMC=256. No fancy bridge needed.
+
 ### What the result actually tells us
 
-- **The framework is correct end-to-end.** W1 cold-start achieves
-  **100% coverage** on all 29 parameters (after fixing the mu_0 sign
-  bug — see provenance note). This confirms the 3-channel Kalman fusion
-  + Bernoulli obs_log_weight_fn design is correct on 15-min data, and
-  the model as implemented is fully identifiable from cold-start.
+- **The framework is correct end-to-end.** Every window of the rolling
+  rollout achieves ≥86% raw coverage. W1 cold-start hits 100% (29/29)
+  and bridges sustain 86-100% across all 26 subsequent windows, with
+  no late-window cascade.
 
-- **Bridge cascade degrades fast on this model — but the degradation
-  is BIAS, not variance.** W2-W27 drift into 20-60% coverage with
-  posterior means locked off-truth at narrow CIs (confidently wrong),
-  not wide uncertainty. Inspection of `parameter_tracking.png` shows
-  most failing traces have stable means substantially offset from
-  the green truth line, with their 90% CIs narrower than the offset.
+- **The earlier "bridge cascade" was the C(t) phase-alignment bug, not
+  a fundamental bridge limitation.** Pre-fix runs showed posterior means
+  locked off-truth at narrow CIs (bias, not variance), with all
+  beta_C_* coefficients biased toward zero by ~50% — the visual
+  signature of phase-shifted C(t) covariates averaged across windows.
+  The user's diagnostic from `parameter_tracking.png` was the unlock.
 
-  The Gaussian-bridge warm-start approximates the previous window's
-  posterior as Gaussian; when the true posterior is narrow and slightly
-  skewed (likely here, given the ratio-like κ_B / α_A^HR / k_F
-  structure and the A-coupled parameters' Stuart-Landau curvature),
-  the first-order fit error compounds across each 1-day stride. By
-  W26-W27 the posterior has collapsed to a biased fixed point 3-10%
-  coverage.
-
-  This is a **research question about the bridge**, not a model
-  identifiability failure: cold-start (W1) recovers the truth perfectly.
+  Once C is sliced from a global precomputed array (treating it as an
+  exogenous channel like T_B and Phi instead of recomputing locally),
+  the single-Gaussian Ledoit-Wolf bridge handles 27 windows without
+  any cascade.
 
 - **This is a research question, not a bug.** The Gaussian-bridge
   bridge is a known first-order approximation documented in the plan's
@@ -161,7 +163,40 @@ W14-24   17-48% (slow drift off-truth)
 W25-27    3-10% (posterior collapsed far from truth)
 ```
 
-### Provenance — the mu_0 sign bug
+### Provenance — three bug fixes that landed the result
+
+The 96.8% / 27-of-27 result is the cumulative product of three bug
+fixes during the high-res development. In the order found:
+
+**1. mu_0 sign mismatch.** Estimator copied the daily FSA's
+`mu_0_abs` reparameterisation (truth `mu_0 < 0` stored positive,
+negated at use). For high-res we deliberately use `mu_0 > 0` to put A
+at its Stuart-Landau fixed point — the negation produced a sign-flipped
+drift in the estimator. Fixed by renaming `mu_0_abs → mu_0` and
+removing the negation. W1 went 96.6% → 100%.
+
+**2. extract_state_at_step k vs K.** In `gk_dpf_v3_lite.py`'s
+`extract_state_at_step` helper, position 6 of `propagate_fn` was
+passing the constant `K` (PF particle count = 400) instead of the
+step index `k`. JAX silently returns garbage for out-of-bounds
+`grid_obs[T_B][400]` (window has 96 bins), corrupting the state
+extracted as the next window's initial condition.
+
+**3. C(t) phase-alignment (THE big one).** `align_obs_fn` was
+computing the circadian forcing C(t) = cos(2π·t) using **window-local
+time** starting at 0 in every window. The simulator generates HR /
+stress / steps using **global time**. With stride=48 bins (12h),
+every other window starts at a noon offset, so the estimator's
+C-array for those windows is the negative of the real one. Averaged
+across windows, this drove the posterior means of all β_C_*
+coefficients toward zero (visible as systematic ~50% magnitude bias
+in the parameter_tracking plot — diagnosed by the user).
+
+Fixed by emitting C as a precomputed exogenous channel like T_B and
+Phi, sliced by `extract_window` in global bin index. After this fix
+the run jumped from 37.5% mean coverage to 96.8% in a single rerun.
+
+### Earlier provenance — the mu_0 sign bug (now part of the above list)
 
 The first rollout attempt used the FSA daily estimator's `mu_0_abs`
 reparameterisation (truth mu_0 < 0 stored as positive lognormal,
