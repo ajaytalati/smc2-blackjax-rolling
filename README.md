@@ -51,11 +51,21 @@ python drivers/fsa_real_obs_5yr_rolling.py --seed 42 --condition C0
 python drivers/fsa_high_res_rolling.py --seed 42
 ```
 
-## Porting to your model
+## Adding a new model
 
-Write three files under `models/<your_model>/`: `simulation.py`,
-`estimation.py`, `sim_plots.py`. The framework in `smc2bj/` is unchanged.
-See [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md) for the contract.
+Models live canonically in the public dev repo
+([Python-Model-Development-Simulation](https://github.com/ajaytalati/Python-Model-Development-Simulation))
+following the 3-file convention; psim
+([Python-Model-Scenario-Simulation](https://github.com/ajaytalati/Python-Model-Scenario-Simulation))
+gates them through the §1.4 sim-est consistency discipline and
+produces packaged scenario artifacts. The SMC² port is the third
+leg: a per-model driver package under `drivers/<model>/` consuming
+the validated artifact.
+
+**The canonical guide for adding a new model to the SMC² repo is
+[`how_to_add_a_new_model/`](how_to_add_a_new_model/)** — orientation,
+prerequisites, 5-step checklist, and a line-by-line worked example
+using SWAT.
 
 ⚠ **Before running any SMC**, complete the **Sim-Est Consistency
 Validation** checks in [§1.4 of the porting guide](docs/PORTING_GUIDE.md).
