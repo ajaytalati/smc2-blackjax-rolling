@@ -218,3 +218,48 @@ What this means for future model ports:
 
 See [BRIDGE_TO_SMC2.md](https://github.com/ajaytalati/Python-Model-Scenario-Simulation/blob/main/docs/BRIDGE_TO_SMC2.md)
 in the new repo for the full adapter recipe.
+
+
+## 2026-04-25 (later): fsa_high_res model moved to public dev repo
+
+Following the bridge work above, `fsa_high_res` has been moved out of
+this repo entirely. The canonical home is now the public dev repo:
+
+  https://github.com/ajaytalati/Python-Model-Development-Simulation
+  → version_1/models/fsa_high_res/
+
+Why: with two copies, the three sim/est consistency bugs documented in
+the high_res_FSA postmortem could ship undetected. With one canonical
+copy in a public repo (with the `how_to_add_a_new_model/` discipline),
+they cannot.
+
+Mechanism — namespace-package merge:
+
+- Both `models/__init__.py` files removed (this repo's and the public
+  dev's). `models/` becomes a PEP-420 namespace package.
+- This repo's `drivers/fsa_high_res_rolling.py` and `tests/conftest.py`
+  prepend the public dev's `version_1/` to sys.path. The SMC² root
+  stays first so `models.fsa_real_obs` (which has SMC²-specific edits)
+  resolves locally; `models.fsa_high_res` falls through to the public
+  dev copy.
+- `models/fsa_high_res/` directory deleted from this repo. Driver and
+  tests are unchanged at the call-site level — same `from models.fsa_high_res...`
+  imports still work.
+
+Verified:
+
+- 9/9 `tests/test_high_res_fsa.py` pass via the new path.
+- **Full 27-window regression: identical aggregate AND per-window
+  metrics** to the pre-move bridge-acceptance run (96.7% mean / 92.5%
+  data-informed / 27 of 27 PASS in 1.02h vs 1.21h pre-move). See the
+  appended section in [result.md](outputs/fsa_high_res_rolling/C0_N256_s42_psim_artifact/result.md).
+
+Workflow consequence for SWAT and beyond:
+
+- New SMC² models live in the public dev repo from day one (3-file
+  convention via `how_to_add_a_new_model/`).
+- The `psim` repo's scenario primitives + §1.4 consistency tests
+  exercise the public dev model directly.
+- This SMC² repo's drivers are thin glue that import the model from
+  the namespace-merged path and consume packaged scenario artifacts
+  via `--scenario-artifact`. No model-specific code lives here.

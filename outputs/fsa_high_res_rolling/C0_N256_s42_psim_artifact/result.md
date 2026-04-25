@@ -65,3 +65,28 @@ Min window: 93.1% (still 23 pp above the 70% PASS threshold).
 ## Conclusion
 
 The bridge's acceptance test passes. **psim v0.1.0** is ready to tag.
+
+---
+
+## 2026-04-25 (later): namespace-package move regression
+
+After moving the canonical `fsa_high_res` model out of this repo and
+into the public dev repo
+([Python-Model-Development-Simulation#1](https://github.com/ajaytalati/Python-Model-Development-Simulation/pull/1)),
+the same artifact + driver was re-run via the new namespace-package
+import path:
+
+| Metric | Pre-move | Post-move (namespace package) |
+|--------|------:|------:|
+| Mean coverage (raw) | 96.7% | **96.7%** |
+| Mean coverage (data-informed) | 92.5% | **92.5%** |
+| PASS rate | 27 / 27 | **27 / 27** |
+| Wall-clock | 1.21 h | 1.02 h |
+
+**Per-window numbers are bit-identical** — confirming the model code
+is now in only one place (the public dev repo) and the SMC² driver
+imports it transparently. The 0.19h wall-clock difference is JAX
+cache warming.
+
+This finalises Phase E of the cosmic-giggling-wadler plan and
+authorises the public-dev PR merge + psim v0.1.1 tag.
