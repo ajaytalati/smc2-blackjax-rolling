@@ -46,8 +46,12 @@ def load_scenario(artifact_dir: str) -> dict:
     obs_data = dict(a["obs_channels"])
     obs_data.update(a["exogenous_channels"])
 
-    T_B_arr = a["exogenous_channels"]["T_B"]["T_B_value"]
-    Phi_arr = a["exogenous_channels"]["Phi"]["Phi_value"]
+    # T_B / Phi are fsa_high_res-specific exogenous channels carried as
+    # convenience for that driver's plotter. SWAT and other models that
+    # have no exogenous broadcasts get None — their drivers don't access
+    # these fields.
+    T_B_arr = a["exogenous_channels"].get("T_B", {}).get("T_B_value")
+    Phi_arr = a["exogenous_channels"].get("Phi", {}).get("Phi_value")
 
     return dict(
         obs_data=obs_data,
