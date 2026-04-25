@@ -425,10 +425,22 @@ def align_obs_fn(obs_data, t_steps, dt):
         n = min(len(raw), T)
         Phi_val[:n] = raw[:n]
 
-    # -- Circadian C(t) per bin (day units, phi frozen) --
-    # dt arg is in days (rolling_cfg.dt convention).
-    t_days = np.arange(T, dtype=np.float32) * float(dt)
-    C_val = np.cos(2.0 * np.pi * t_days + PHI_FROZEN).astype(np.float32)
+    # -- Circadian C(t) per bin --
+    # Use the precomputed global C array sliced into this window by
+    # extract_window (just like T_B / Phi). This preserves the correct
+    # phase across windows that don't start at midnight. Falls back to
+    # window-local recomputation only if no C channel is present (e.g.
+    # legacy callers).
+    C_val = np.zeros(T, dtype=np.float32)
+    c_ch = _get('C')
+    if c_ch and 'C_value' in c_ch:
+        raw = np.asarray(c_ch['C_value']).astype(np.float32)
+        n = min(len(raw), T)
+        C_val[:n] = raw[:n]
+    else:
+        # Fallback (legacy / wrong for non-midnight-start windows)
+        t_days = np.arange(T, dtype=np.float32) * float(dt)
+        C_val[:] = np.cos(2.0 * np.pi * t_days + PHI_FROZEN).astype(np.float32)
 
     has_any = np.maximum.reduce([hr_pres, s_pres, st_pres, sl_pres])
 

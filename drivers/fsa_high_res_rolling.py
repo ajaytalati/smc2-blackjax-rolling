@@ -112,7 +112,7 @@ def generate_observations(trajectory, T_B_arr, Phi_arr, params, seed=42):
     """Run the 4 obs channel generators + 2 exogenous broadcasts."""
     from models.fsa_high_res.simulation import (
         gen_obs_sleep, gen_obs_hr, gen_obs_stress, gen_obs_steps,
-        gen_T_B_channel, gen_Phi_channel,
+        gen_T_B_channel, gen_Phi_channel, gen_C_channel,
     )
     n_bins = trajectory.shape[0]
     t_grid = np.arange(n_bins, dtype=np.float32) * DT_BIN_DAYS
@@ -126,6 +126,7 @@ def generate_observations(trajectory, T_B_arr, Phi_arr, params, seed=42):
     steps  = gen_obs_steps(trajectory,  t_grid, params, aux, prior, seed=seed + 3)
     T_B_ch = gen_T_B_channel(trajectory, t_grid, params, aux, None, seed=seed + 4)
     Phi_ch = gen_Phi_channel(trajectory, t_grid, params, aux, None, seed=seed + 5)
+    C_ch   = gen_C_channel  (trajectory, t_grid, params, aux, None, seed=seed + 6)
 
     return {
         'obs_sleep':  sleep,
@@ -134,6 +135,7 @@ def generate_observations(trajectory, T_B_arr, Phi_arr, params, seed=42):
         'obs_steps':  steps,
         'T_B':        T_B_ch,
         'Phi':        Phi_ch,
+        'C':          C_ch,
     }
 
 

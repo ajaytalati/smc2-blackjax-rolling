@@ -403,6 +403,24 @@ def gen_Phi_channel(trajectory, t_grid, params, aux, prior_channels, seed):
             'Phi_value': val}
 
 
+def gen_C_channel(trajectory, t_grid, params, aux, prior_channels, seed):
+    """Broadcast deterministic circadian C(t) = cos(2 pi t + phi) per bin.
+
+    Emitted as an exogenous channel so that ``extract_window`` slices it
+    by global bin index, preserving the correct C(t) phase inside each
+    rolling window. Without this the estimator's per-window C(t) would
+    always restart at C=cos(0)=+1, even for windows starting at noon —
+    producing a systematic ~50% sign-flip on every other window's C and
+    biasing all beta_C_* posterior means toward zero.
+    """
+    del trajectory, aux, prior_channels, seed
+    phi = float(params.get('phi', 0.0))
+    val = np.cos(2.0 * np.pi * np.asarray(t_grid, dtype=np.float32)
+                 + phi).astype(np.float32)
+    return {'t_idx':   np.arange(len(t_grid), dtype=np.int32),
+            'C_value': val}
+
+
 # =========================================================================
 # PHYSICS VERIFICATION
 # =========================================================================
@@ -531,6 +549,7 @@ HIGH_RES_FSA_MODEL = SDEModel(
         ChannelSpec("obs_steps",  depends_on=("obs_sleep",), generate_fn=gen_obs_steps),
         ChannelSpec("T_B",        depends_on=(),             generate_fn=gen_T_B_channel),
         ChannelSpec("Phi",        depends_on=(),             generate_fn=gen_Phi_channel),
+        ChannelSpec("C",          depends_on=(),             generate_fn=gen_C_channel),
     ),
 
     plot_fn=plot_fsa_high_res,
