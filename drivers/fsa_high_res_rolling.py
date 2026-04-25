@@ -32,6 +32,26 @@ import numpy as np
 os.environ.setdefault('JAX_ENABLE_X64', 'True')
 os.environ.setdefault('JAX_COMPILATION_CACHE_DIR', '/tmp/jax_cache')
 
+# fsa_high_res lives canonically in the public dev repo
+# (Python-Model-Development-Simulation). We import it via the namespace
+# package: models/ in this repo (with fsa_real_obs) and models/ in the
+# public dev repo (with fsa_high_res) are both PEP-420 namespace
+# packages, and Python merges their __path__ when both parents are on
+# sys.path. SMC² root must come FIRST so models.fsa_real_obs (which has
+# SMC²-specific edits) resolves locally; models.fsa_high_res then falls
+# through to the public dev copy.
+_PUBLIC_DEV_V1 = os.path.expanduser(
+    "~/Repos/Python-Model-Development-Simulation/version_1"
+)
+if not os.path.isdir(_PUBLIC_DEV_V1):
+    raise SystemExit(
+        f"fsa_high_res model is canonical in the public dev repo at "
+        f"{_PUBLIC_DEV_V1} (set _PUBLIC_DEV_V1 if cloned elsewhere). "
+        f"Clone https://github.com/ajaytalati/Python-Model-Development-Simulation"
+    )
+if _PUBLIC_DEV_V1 not in sys.path:
+    sys.path.append(_PUBLIC_DEV_V1)
+
 import jax
 import jax.numpy as jnp
 
@@ -46,6 +66,7 @@ from smc2bj.plotting.rolling import (
 # Reuse the C0 macrocycle generator from the daily FSA driver
 from drivers.fsa_real_obs_5yr_rolling import generate_macrocycle_C0
 
+# fsa_high_res from the public dev repo (the canonical home)
 from models.fsa_high_res.simulation import (
     HIGH_RES_FSA_MODEL, DEFAULT_PARAMS,
     generate_phi_sub_daily, circadian,
