@@ -257,6 +257,12 @@ def _parse_args():
                    help='K for --bridge mog (default 2)')
     p.add_argument('--sim-only', action='store_true')
     p.add_argument('--show-checkpoint', action='store_true')
+    p.add_argument('--scenario-artifact', default=None,
+                   help='Path to a Python-Model-Scenario-Simulation artifact '
+                        'directory. When set, bypasses inline data generation '
+                        '(Steps 1-4) and consumes the validated artifact '
+                        'instead. The downstream rolling-window SMC step is '
+                        'unchanged.')
     return p.parse_args()
 
 
@@ -269,6 +275,8 @@ def _out_dir(seed: int, n_smc: int, bridge_tag: str = '') -> str:
 def main():
     args = _parse_args()
     bridge_tag = '' if args.bridge == 'gaussian' else f'mog{args.bridge_K}'
+    if args.scenario_artifact:
+        bridge_tag = (bridge_tag + '_psim_artifact').lstrip('_')
     out_dir = _out_dir(args.seed, args.n_smc, bridge_tag)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -319,46 +327,82 @@ def main():
           f"{'GPU' if jax.devices()[0].platform == 'gpu' else 'CPU'}")
     print()
 
-    # Step 1: Macrocycle → daily Phi
-    print("Step 1: Generate daily macrocycle schedule (C0) then expand to 15-min bins")
-    daily_T_B, daily_Phi = generate_macrocycle_C0(N_DAYS_TOTAL, seed=args.seed)
-    print(f"  daily T_B range: [{daily_T_B.min():.3f}, {daily_T_B.max():.3f}]")
-    print(f"  daily Phi range: [{daily_Phi.min():.4f}, {daily_Phi.max():.4f}]")
-    Phi_arr = generate_phi_sub_daily(daily_Phi, seed=args.seed)
-    T_B_arr = np.repeat(daily_T_B, BINS_PER_DAY).astype(np.float32)
-    print(f"  expanded Phi_arr: shape {Phi_arr.shape}, "
-          f"range [{Phi_arr.min():.4f}, {Phi_arr.max():.4f}]")
+    if args.scenario_artifact:
+        # Steps 1-4 (inline data generation) replaced by loading a
+        # validated, packaged scenario artifact from the
+        # Python-Model-Scenario-Simulation repo.
+        from drivers._artifact_loader import load_scenario
+        print(f"Steps 1-4 [SKIPPED]: loading scenario artifact")
+        print(f"  artifact: {args.scenario_artifact}")
+        bundle = load_scenario(args.scenario_artifact)
+        print(f"  model:    {bundle['model_name']}/{bundle['model_version']}")
+        print(f"  scenario: {bundle['scenario_name']}")
+        print(f"  bins:     {bundle['n_bins_total']} "
+              f"({bundle['bins_per_day']}/day)  seed={bundle['seed']}")
+        T_B_arr = np.asarray(bundle['T_B_arr'], dtype=np.float32)
+        Phi_arr = np.asarray(bundle['Phi_arr'], dtype=np.float32)
+        trajectory = np.asarray(bundle['trajectory'], dtype=np.float64)
+        obs_data = bundle['obs_data']
+        # Reconcile truth with the artifact's manifest (sim/est should agree
+        # on truth here; inline-path truth was DEFAULT_PARAMS).
+        true_params = dict(bundle['truth_params'])
+        truth = _truth_dict(true_params)
+        print(f"  B range:  [{trajectory[:,0].min():.3f}, "
+              f"{trajectory[:,0].max():.3f}]")
+        print(f"  F range:  [{trajectory[:,1].min():.3f}, "
+              f"{trajectory[:,1].max():.3f}]")
+        print(f"  A range:  [{trajectory[:,2].min():.3f}, "
+              f"{trajectory[:,2].max():.3f}]")
+        for ch_name in ('obs_HR', 'obs_sleep', 'obs_stress', 'obs_steps'):
+            n = len(obs_data[ch_name].get('t_idx', []))
+            print(f"    {ch_name}: {n} obs")
+        traj_csv = os.path.join(out_dir, 'trajectory.csv')
+        np.savetxt(traj_csv,
+                   np.column_stack([np.arange(trajectory.shape[0]) * DT_BIN_DAYS,
+                                    trajectory]),
+                   delimiter=',', header='t_days,B,F,A', comments='')
+        print(f"  -> {traj_csv}")
+    else:
+        # Step 1: Macrocycle → daily Phi
+        print("Step 1: Generate daily macrocycle schedule (C0) then expand to 15-min bins")
+        daily_T_B, daily_Phi = generate_macrocycle_C0(N_DAYS_TOTAL, seed=args.seed)
+        print(f"  daily T_B range: [{daily_T_B.min():.3f}, {daily_T_B.max():.3f}]")
+        print(f"  daily Phi range: [{daily_Phi.min():.4f}, {daily_Phi.max():.4f}]")
+        Phi_arr = generate_phi_sub_daily(daily_Phi, seed=args.seed)
+        T_B_arr = np.repeat(daily_T_B, BINS_PER_DAY).astype(np.float32)
+        print(f"  expanded Phi_arr: shape {Phi_arr.shape}, "
+              f"range [{Phi_arr.min():.4f}, {Phi_arr.max():.4f}]")
 
-    # Step 2: Forward simulate
-    print(f"\nStep 2: Forward simulate ({N_SUBSTEPS} substeps/bin)")
-    init = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.55}
-    t0 = time.time()
-    trajectory = simulate_sde_high_res(T_B_arr, Phi_arr, true_params, init,
-                                        n_substeps=N_SUBSTEPS, seed=args.seed)
-    print(f"  B range: [{trajectory[:,0].min():.3f}, {trajectory[:,0].max():.3f}]")
-    print(f"  F range: [{trajectory[:,1].min():.3f}, {trajectory[:,1].max():.3f}]")
-    print(f"  A range: [{trajectory[:,2].min():.3f}, {trajectory[:,2].max():.3f}]")
-    print(f"  sim time: {time.time()-t0:.1f}s")
+        # Step 2: Forward simulate
+        print(f"\nStep 2: Forward simulate ({N_SUBSTEPS} substeps/bin)")
+        init = {'B_0': 0.05, 'F_0': 0.10, 'A_0': 0.55}
+        t0 = time.time()
+        trajectory = simulate_sde_high_res(T_B_arr, Phi_arr, true_params, init,
+                                            n_substeps=N_SUBSTEPS, seed=args.seed)
+        print(f"  B range: [{trajectory[:,0].min():.3f}, {trajectory[:,0].max():.3f}]")
+        print(f"  F range: [{trajectory[:,1].min():.3f}, {trajectory[:,1].max():.3f}]")
+        print(f"  A range: [{trajectory[:,2].min():.3f}, {trajectory[:,2].max():.3f}]")
+        print(f"  sim time: {time.time()-t0:.1f}s")
 
-    # Save trajectory
-    traj_csv = os.path.join(out_dir, 'trajectory.csv')
-    np.savetxt(traj_csv,
-               np.column_stack([np.arange(trajectory.shape[0]) * DT_BIN_DAYS,
-                                trajectory]),
-               delimiter=',', header='t_days,B,F,A', comments='')
-    print(f"  -> {traj_csv}")
+        # Save trajectory
+        traj_csv = os.path.join(out_dir, 'trajectory.csv')
+        np.savetxt(traj_csv,
+                   np.column_stack([np.arange(trajectory.shape[0]) * DT_BIN_DAYS,
+                                    trajectory]),
+                   delimiter=',', header='t_days,B,F,A', comments='')
+        print(f"  -> {traj_csv}")
 
-    # Step 3: Observations
-    print("\nStep 3: Generate observations (4 channels)")
-    obs_data = generate_observations(trajectory, T_B_arr, Phi_arr,
-                                     true_params, seed=args.seed + 100)
+        # Step 3: Observations
+        print("\nStep 3: Generate observations (4 channels)")
+        obs_data = generate_observations(trajectory, T_B_arr, Phi_arr,
+                                         true_params, seed=args.seed + 100)
 
-    # Step 4: Missing data
-    print("\nStep 4: Apply missing data (5% dropout on HR/stress/steps)")
-    obs_data = apply_missing_data_high_res(obs_data, seed=args.seed + 200)
-    for ch_name in ('obs_HR', 'obs_sleep', 'obs_stress', 'obs_steps'):
-        n = (len(obs_data[ch_name]['t_idx']) if 't_idx' in obs_data[ch_name] else 0)
-        print(f"    {ch_name}: {n} obs")
+        # Step 4: Missing data
+        print("\nStep 4: Apply missing data (5% dropout on HR/stress/steps)")
+        obs_data = apply_missing_data_high_res(obs_data, seed=args.seed + 200)
+        for ch_name in ('obs_HR', 'obs_sleep', 'obs_stress', 'obs_steps'):
+            n = (len(obs_data[ch_name]['t_idx']) if 't_idx' in obs_data[ch_name] else 0)
+            print(f"    {ch_name}: {n} obs")
 
     # Step 5: Diagnostic plots
     print("\nStep 5: Diagnostic plots")

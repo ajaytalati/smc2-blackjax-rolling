@@ -170,3 +170,50 @@ Optional follow-ups from the TODO list above (plot promotion to
 `smc2bj/plotting/`, `MODEL_SPECIFICATION.md` priors-table auto-regen
 wiring, OU sketch fleshed out to working implementation, `gemini_code/`
 cleanup).
+
+
+## 2026-04-25: bridge to Python-Model-Scenario-Simulation
+
+A new public middle repo —
+[Python-Model-Scenario-Simulation](https://github.com/ajaytalati/Python-Model-Scenario-Simulation)
+(`psim` package) — was created in response to the
+[POSTMORTEM_three_bugs](outputs/fsa_high_res_rolling/POSTMORTEM_three_bugs.md)
+case study. It owns scenario primitives, the §1.4 sim-est consistency
+discipline as runnable code, and a canonical scenario-artifact format.
+
+Wired into this repo via:
+
+- `drivers/_artifact_loader.py` (~50 lines) — calls
+  `psim.io.format.read_artifact` and merges obs + exogenous into the
+  flat `obs_data` dict that `rolling_window_smc` already accepts.
+- `drivers/fsa_high_res_rolling.py` — gained a
+  `--scenario-artifact <dir>` flag. When set, Steps 1-4 (inline data
+  generation) are skipped and the validated artifact is consumed
+  instead. Results land under
+  `outputs/fsa_high_res_rolling/<...>_psim_artifact/` to keep them
+  separate from the inline-path reference.
+
+Verification:
+
+- **W1 parity**: artifact-fed run produces 27/29 = 93.1% raw coverage
+  / 100% data-informed coverage / 1/1 PASS — bit-identical bundle to
+  what the inline path would have generated.
+- **Trajectory ranges**: B [0.051, 0.677], F [0.092, 0.294],
+  A [0.474, 0.751] — match the C-fix reference.
+- Full 27-window reproduction was kicked off (~3h on this GPU).
+  Expected: 96.8% mean coverage / 27 of 27 PASS, matching
+  `C_phase_fix_result.md`.
+
+What this means for future model ports:
+
+- **SWAT and every subsequent model must enter via `psim` first.** The
+  three §1.4 consistency checks (drift parity, obs-prediction parity,
+  cold-start coverage) and the round-trip check are now mandatory
+  pre-conditions, codified in `psim/validation/`. The C-phase /
+  obs-misalignment bug class becomes literally impossible to ship.
+- The driver's inline path stays as-is for backward compatibility.
+  No invasive change to `smc2bj/`. Loose coupling: artifact format
+  (`SCENARIO_SCHEMA_VERSION = "1.0"`) is the only contract.
+
+See [BRIDGE_TO_SMC2.md](https://github.com/ajaytalati/Python-Model-Scenario-Simulation/blob/main/docs/BRIDGE_TO_SMC2.md)
+in the new repo for the full adapter recipe.
