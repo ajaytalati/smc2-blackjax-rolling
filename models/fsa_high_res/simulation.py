@@ -317,7 +317,11 @@ def gen_obs_hr(trajectory, t_grid, params, aux, prior_channels, seed):
 def gen_obs_stress(trajectory, t_grid, params, aux, prior_channels, seed):
     """Stress, Gaussian, measured only during waking.
 
-    stress = S_base + k_F * F - k_A_S * A - beta_C_S * C(t) + noise
+    stress = S_base + k_F * F - k_A_S * A + beta_C_S * C(t) + noise
+
+    With truth beta_C_S < 0 (default -4.0), this gives stress UP at noon
+    (C ≈ -1) and DOWN at midnight (C ≈ +1) — physiologically expected
+    diurnal pattern for cortisol-correlated stress.
     """
     del aux
     rng = np.random.default_rng(seed)

@@ -319,8 +319,14 @@ def make_gk_dpf_v3_lite_log_density(
             noise = jax.random.normal(sk, (K, n_s))
 
             def _prop_one(y, xi):
+                # BUG fix (2026-04-25): position 6 of propagate_fn is the
+                # step index `k`, not the particle-count constant `K`. The
+                # earlier signature `... grid_obs, K, sigma_diag ...` was
+                # silently producing out-of-bounds reads on grid_obs[T_B][K]
+                # (K=400 vs t_steps=96 in the high-res model), corrupting
+                # the extracted bridge state.
                 x_new, pred_lw = model.propagate_fn(
-                    y, k, dt, params, grid_obs, K, sigma_diag, xi, None)
+                    y, k, dt, params, grid_obs, k, sigma_diag, xi, None)
                 obs_lw = model.obs_log_weight_fn(
                     x_new, grid_obs, k, params)
                 return x_new, pred_lw + obs_lw
