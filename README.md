@@ -57,6 +57,14 @@ Write three files under `models/<your_model>/`: `simulation.py`,
 `estimation.py`, `sim_plots.py`. The framework in `smc2bj/` is unchanged.
 See [docs/PORTING_GUIDE.md](docs/PORTING_GUIDE.md) for the contract.
 
+⚠ **Before running any SMC**, complete the **Sim-Est Consistency
+Validation** checks in [§1.4 of the porting guide](docs/PORTING_GUIDE.md).
+A single phase-misalignment between simulator and estimator can
+produce confidently-wrong posteriors that look like a bridge problem.
+See the [postmortem](outputs/fsa_high_res_rolling/POSTMORTEM_three_bugs.md)
+for the cost (~15h wasted GPU/analyst time across three bugs that the
+checks would have caught in 30 minutes).
+
 ## Provenance
 
 - Pre-refactor snapshot: `pre-refactor-2026-04-23` tag in the upstream

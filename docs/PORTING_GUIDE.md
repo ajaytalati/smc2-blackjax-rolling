@@ -143,6 +143,148 @@ Reference: [models/fsa_real_obs/sim_plots.py](../models/fsa_real_obs/sim_plots.p
 
 ---
 
+## 1.4 ⚠ Sim-Est Consistency Validation — DO THIS BEFORE ANY SMC RUN
+
+**Mandatory step for every new model.** Skip at your own peril.
+
+The simulator/scenario generator IS the ground truth your estimator
+will be compared against. If the simulator and the estimator interpret
+the data even slightly differently — wrong sign on a covariate, wrong
+phase on a periodic forcing, wrong bin index in an out-of-bounds array
+read — the SMC² will produce confidently-wrong posteriors. The
+estimator doesn't know it's wrong; it just fits the data the
+**estimator** thinks it's seeing, which differs from what the
+**simulator** generated.
+
+Real cost data from the high-res FSA development (see
+[outputs/fsa_high_res_rolling/POSTMORTEM_three_bugs.md](../outputs/fsa_high_res_rolling/POSTMORTEM_three_bugs.md)):
+**three sim/est consistency bugs cost ~15 hours of wasted GPU and
+analyst time** before each was found, and one of them prompted two
+separate "principled fix" plans for a phantom problem (the apparent
+bridge cascade was actually a phase-misaligned covariate).
+
+### 1.4.1 The three checks every new model must pass
+
+Run all three before launching even a 1-window SMC. Total cost: ~30 min
+of test-writing for a 3-state, 4-channel model. Catches >90% of the
+bug class above.
+
+#### Check A — Drift parity at truth
+
+For the truth parameter set, the **simulator's drift** at any state
+must equal the **estimator's drift** at the same state and parameters.
+If they don't match, you have a sign/sign-convention bug somewhere.
+
+```python
+def test_drift_parity():
+    from models.<your_model>.simulation import drift, DEFAULT_PARAMS
+    from models.<your_model>.estimation import (
+        propagate_fn, get_init_theta_fn, _PI,
+    )
+    p = DEFAULT_PARAMS                          # truth
+    y = jnp.array([0.05, 0.10, 0.55])           # any plausible state
+    aux = (build_T_B_arr(...), build_Phi_arr(...))
+
+    # Simulator drift (numpy)
+    sim_dy = drift(0.0, np.asarray(y), p, aux)
+
+    # Estimator drift via propagate_fn at dt → 0 with zero noise:
+    # x_pred ≈ y + dt * drift, so (x_pred - y) / dt ≈ drift.
+    params_vec = get_init_theta_fn()
+    grid_obs = build_minimal_grid_obs(...)      # T_B, Phi at k=0
+    dt = 1e-4
+    sigma_diag = jnp.zeros(3)
+    noise = jnp.zeros(3)
+    y_next, _ = propagate_fn(y, 0.0, dt, params_vec, grid_obs, 0,
+                              sigma_diag, noise, None)
+    est_dy = (np.asarray(y_next) - np.asarray(y)) / dt
+
+    np.testing.assert_allclose(sim_dy, est_dy, atol=1e-3)
+```
+
+If this fails, you have a drift-formula mismatch (sign, missing term,
+wrong parameter index).
+
+#### Check B — Forward-prediction parity for every observation channel
+
+For every Gaussian-linear observation channel, the simulator's
+noiseless prediction must equal the estimator's `_obs_predictions`
+(or whatever the equivalent is for your model) at the same state and
+truth parameters.
+
+```python
+def test_obs_prediction_parity():
+    p = DEFAULT_PARAMS
+    y = jnp.array([0.30, 0.15, 0.60])
+    C_t = float(circadian(t=0.0))   # midnight
+
+    # Simulator: hr_mean (no noise)
+    sim_hr = (p['HR_base'] - p['kappa_B']*y[0]
+              + p['alpha_A_HR']*y[2] + p['beta_C_HR']*C_t)
+
+    # Estimator's _gaussian_obs_ll computes pred internally; expose
+    # _obs_predictions or replicate the formula from align_obs_fn output:
+    grid = align_obs_fn(fake_obs_data_with_known_C, ...)
+    est_hr = compute_pred_hr_from_grid(y, grid, k=0, params)
+
+    np.testing.assert_allclose(sim_hr, est_hr, atol=1e-5)
+```
+
+Repeat for every Gaussian channel. For Bernoulli channels, compare
+the success probability `p = sigmoid(...)` rather than the integer
+sample. **This single test would have caught the C-phase bug
+immediately:** at noon (C=−1) the sim's predicted HR for the same
+state would have differed from the estimator's by `2 · |β_C_HR|` ≈ 5
+bpm, which `assert_allclose(atol=1e-5)` flags instantly.
+
+#### Check C — Cold-start coverage on a single window with truth-centred prior
+
+Run **one** window of the SMC with priors centered tightly around the
+truth (e.g. lognormal sigma 0.05). With correct sim/est alignment,
+coverage should be ~100% on every parameter. If it's not, there is a
+sim/est discrepancy — fix it before adding bridges, more particles,
+or any other complexity.
+
+```bash
+python drivers/<your_scenario>.py --seed 42 --windows 1 --prior tight
+```
+
+Cold-start at a tight prior is the cheapest possible diagnostic of
+sim/est consistency. If coverage isn't ~100%, **the rest of the
+pipeline can't help you** — work backward from the failing parameters
+to find which obs channel or covariate is mis-aligned.
+
+### 1.4.2 Side-by-side data-flow plots (recommended)
+
+For each exogenous covariate (T_B, Phi, periodic forcings like the
+FSA's C(t), etc.), plot **side-by-side**:
+- The array the simulator used to generate the data for one window.
+- The array the estimator's `align_obs_fn` produces for the same window.
+
+These should be **pointwise identical** (within float32 precision).
+This is the test that would have caught the C-phase bug at the cost
+of one matplotlib figure per covariate × the first non-W1 window.
+
+A reference helper for this lives in
+`/tmp/diff_old_vs_new_sim.py` (used during the high-res development to
+diagnose the C-phase bug — adapt for your model).
+
+### 1.4.3 Why module-level code review isn't enough
+
+Six independent code-audit passes ran during the high-res FSA
+debugging. The first three found two real bugs (mu_0 sign,
+extract_state_at_step k/K). The next three were clean. **None caught
+the C-phase bug.** Why: the C-phase bug isn't in any single function
+— `align_obs_fn` is correct in isolation, the simulator is correct
+in isolation, the estimator's `propagate_fn` is correct in isolation.
+The bug is in the **interaction across the window boundary**, which
+no single-file audit can catch.
+
+End-to-end data-flow tests of the kind described in 1.4.1 and 1.4.2
+DO catch this class of bug. Always run them before SMC.
+
+---
+
 ## 2. The per-window data pipeline
 
 Orchestrated by `drivers/<scenario>.py` + `smc2bj.pipeline.rolling`. A run
