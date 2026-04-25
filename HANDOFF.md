@@ -200,9 +200,10 @@ Verification:
   what the inline path would have generated.
 - **Trajectory ranges**: B [0.051, 0.677], F [0.092, 0.294],
   A [0.474, 0.751] — match the C-fix reference.
-- Full 27-window reproduction was kicked off (~3h on this GPU).
-  Expected: 96.8% mean coverage / 27 of 27 PASS, matching
-  `C_phase_fix_result.md`.
+- **Full 27-window reproduction: PASSED.** 96.7% mean raw coverage /
+  92.5% data-informed / 27 of 27 PASS in 1.21h (vs the C-fix reference
+  96.8% / 92.2% / 27 of 27 in 1.24h — within stochastic noise). See
+  [outputs/fsa_high_res_rolling/C0_N256_s42_psim_artifact/result.md](outputs/fsa_high_res_rolling/C0_N256_s42_psim_artifact/result.md).
 
 What this means for future model ports:
 
