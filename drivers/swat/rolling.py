@@ -138,6 +138,20 @@ def _parse_args(cfg: SwatRollingConfig):
                    help='Schrödinger-Föllmer t in [0, 1] along BW geodesic')
     p.add_argument('--sf-entropy-reg', type=float, default=cfg.sf_entropy_reg,
                    help='Schrödinger entropic regularisation; 0 = exact OT')
+    p.add_argument('--sf-q1-mode', choices=('is', 'annealed'),
+                   default=cfg.sf_q1_mode,
+                   help='SF q1 estimator: is = Path A (single IS), '
+                        'annealed = Path B (K-stage tempered SMC)')
+    p.add_argument('--sf-annealed-n-stages', type=int,
+                   default=cfg.sf_annealed_n_stages)
+    p.add_argument('--sf-annealed-n-mh-steps', type=int,
+                   default=cfg.sf_annealed_n_mh_steps)
+    p.add_argument('--sf-annealed-proposal-scale', type=float,
+                   default=cfg.sf_annealed_proposal_scale)
+    p.add_argument('--sf-use-q0-cov', action='store_true',
+                   default=cfg.sf_use_q0_cov,
+                   help='Decoupled SF (issue #3 fix 2): bridge mean from BW interp, '
+                        'cov from q0. Recommended with --sf-q1-mode annealed.')
     p.add_argument('--show-checkpoint', action='store_true')
     return p.parse_args()
 
@@ -161,7 +175,9 @@ def main():
     elif args.bridge == 'mog':
         bridge_tag = f'mog{args.bridge_K}'
     elif args.bridge == 'schrodinger_follmer':
-        bridge_tag = f'sf{args.sf_blend:.2f}'
+        mode_tag = 'a' if args.sf_q1_mode == 'annealed' else 'i'
+        cov_tag = 'q' if args.sf_use_q0_cov else ''
+        bridge_tag = f'sf{mode_tag}{cov_tag}{args.sf_blend:.2f}'
     else:
         bridge_tag = args.bridge
     out_dir = _out_dir(args.seed, args.n_smc, cfg.scenario_name, bridge_tag)
@@ -208,6 +224,11 @@ def main():
         bridge_mog_components=args.bridge_K,
         sf_blend=args.sf_blend,
         sf_entropy_reg=args.sf_entropy_reg,
+        sf_q1_mode=args.sf_q1_mode,
+        sf_annealed_n_stages=args.sf_annealed_n_stages,
+        sf_annealed_n_mh_steps=args.sf_annealed_n_mh_steps,
+        sf_annealed_proposal_scale=args.sf_annealed_proposal_scale,
+        sf_use_q0_cov=args.sf_use_q0_cov,
     )
     rolling_cfg = RollingConfig(
         window_days=cfg.window_bins,    # (framework reads as bins; "days" is misnomer)

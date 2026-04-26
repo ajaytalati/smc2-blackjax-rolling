@@ -245,21 +245,36 @@ def run_smc_window_bridge(new_ld, prev_particles, model, T_arr,
 
     if cfg.bridge_type == 'schrodinger_follmer':
         prev = jnp.array(prev_particles, dtype=jnp.float64)
+        sf_rng = jax.random.PRNGKey(seed + 17)   # offset to decorrelate from outer init key
         sf = fit_sf_base(
             prev, new_ld,
             blend=cfg.sf_blend,
             entropy_reg=cfg.sf_entropy_reg,
+            q1_mode=cfg.sf_q1_mode,
+            annealed_n_stages=cfg.sf_annealed_n_stages,
+            annealed_n_mh_steps=cfg.sf_annealed_n_mh_steps,
+            annealed_proposal_scale=cfg.sf_annealed_proposal_scale,
+            use_q0_cov=cfg.sf_use_q0_cov,
+            rng_key=sf_rng,
         )
         m, L_chol, L_inv, log_det = sf['m'], sf['L_chol'], sf['L_inv'], sf['log_det']
         const = -0.5 * (d * jnp.log(2.0 * jnp.pi) + log_det)
 
-        # SF diagnostics: print BW endpoint distances + IS effective N
+        # SF diagnostics: print BW endpoint distance + per-mode ESS / acceptance
         q0_to_q1 = float(jnp.linalg.norm(sf['q1_mean'] - sf['q0_mean']))
-        print(f"      SF base: blend={sf['blend']:.2f}, "
+        if sf['q1_mode'] == 'annealed':
+            mode_diag = (f"n_stages={cfg.sf_annealed_n_stages}, "
+                         f"n_mh={cfg.sf_annealed_n_mh_steps}, "
+                         f"min ESS={sf['n_eff']:.1f}/{N}, "
+                         f"MH acc={sf['accept_mean']:.2f}")
+        else:
+            mode_diag = f"IS n_eff={sf['n_eff']:.1f}/{N}"
+        cov_tag = 'q0_cov' if sf['use_q0_cov'] else 'BW_cov'
+        print(f"      SF base ({sf['q1_mode']}/{cov_tag}): blend={sf['blend']:.2f}, "
               f"entropy_reg={sf['entropy_reg']:.3g}, "
               f"log_det={float(log_det):.1f}, "
               f"||m1-m0||={q0_to_q1:.3f}, "
-              f"IS n_eff={sf['n_eff']:.1f}/{N}",
+              f"{mode_diag}",
               flush=True)
 
         @jax.jit

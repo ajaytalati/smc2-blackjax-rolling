@@ -32,6 +32,15 @@ class SMCConfig:
                                        # t in [0, 1] along BW geodesic. 0 = prev posterior,
                                        # 1 = new-posterior moment-match, 0.5 = midpoint
     sf_entropy_reg: float = 0.0        # Schrödinger entropic regularisation; 0 = exact OT
+    sf_q1_mode: str = 'is'             # 'is'      = single-step importance sampling (Path A;
+                                       #             degenerates in high-D, see issue #1)
+                                       # 'annealed'= K-stage tempered-SMC with RW-MH (Path B)
+    sf_annealed_n_stages: int = 3      # K for Path B
+    sf_annealed_n_mh_steps: int = 2    # RW-MH moves per Path B stage
+    sf_annealed_proposal_scale: float = 0.4  # Roberts-Gelman-Gilks for d~35
+    sf_use_q0_cov: bool = False        # Decoupled mode (issue #3 fix 2): mean from
+                                       # BW interp, cov from q0 (LW-shrunk). Avoids
+                                       # over-inflation when q1 cov is MCMC-noisy.
 
     # HMC kernel
     hmc_step_size: float = 0.025

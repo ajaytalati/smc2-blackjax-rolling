@@ -175,6 +175,110 @@ def estimate_target_gaussian(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Path B: annealed q1 estimation via mini-SMC
+# ─────────────────────────────────────────────────────────────────────
+
+def estimate_target_gaussian_annealed(
+    prev_particles: jnp.ndarray,
+    new_ld_fn: Callable,
+    *,
+    n_stages: int = 3,
+    n_mh_steps: int = 2,
+    proposal_scale: float = 0.4,
+    rng_key=None,
+) -> Tuple[jnp.ndarray, jnp.ndarray, float, float]:
+    """K-stage annealed q1 estimation (Path B).
+
+    A short tempered-SMC chain replaces the single importance-sampling
+    step of ``estimate_target_gaussian``. At fractional inverse-
+    temperatures ``beta_k = k/K`` for ``k = 1, ..., K``:
+
+      1. Reweight by incremental log-likelihood
+         ``(beta_k - beta_{k-1}) * new_ld(u) = (1/K) * new_ld(u)``.
+      2. Systematic resample.
+      3. Apply ``n_mh_steps`` random-walk Metropolis-Hastings moves at
+         temperature ``beta_k`` with a Gaussian proposal scaled by
+         ``proposal_scale * sqrt(emp_cov)``.
+
+    After K stages the particles approximate samples from
+    ``q_0 * pi_new = pi_new`` (up to a constant). q1 is the unweighted
+    moments of the moved particles.
+
+    Path A (single-step IS) collapses in high dimensions when the
+    new-window likelihood is much sharper than the prev-posterior
+    Gaussian. The K-stage chain breaks the same total likelihood into
+    K manageable pieces, each one ``1/K`` of the total log-weight,
+    keeping per-stage ESS healthy.
+
+    Args:
+        prev_particles: (N, d) prev-window posterior particles.
+        new_ld_fn: callable u -> log pi_new(u).
+        n_stages: number of tempering stages K.
+        n_mh_steps: RW-MH moves per stage.
+        proposal_scale: RW-MH step size; default 0.4 ~ 2.38/sqrt(35)
+                        (Roberts-Gelman-Gilks optimal for 35-D).
+        rng_key: JAX PRNG key.
+
+    Returns:
+        m1   : (d,) sample mean of final particles
+        S1   : (d, d) sample covariance + 1e-4 reg
+        n_eff_min: minimum per-stage ESS (diagnostic)
+        accept_mean: mean MH acceptance across all stages (diagnostic)
+    """
+    if rng_key is None:
+        rng_key = jax.random.PRNGKey(0)
+
+    particles = jnp.asarray(prev_particles, dtype=jnp.float64)
+    N, d = particles.shape
+    K = int(n_stages)
+
+    # One initial new_ld eval so MH ratios at stage 1 have a baseline.
+    log_p_curr = jax.vmap(new_ld_fn)(particles)
+
+    n_eff_min = float(N)
+    accept_sum = 0.0
+    accept_count = 0
+
+    for k in range(1, K + 1):
+        # 1. Reweight by (1/K) * new_ld and resample
+        log_w_unnorm = (1.0 / K) * log_p_curr
+        log_w_norm = log_w_unnorm - jax.scipy.special.logsumexp(log_w_unnorm)
+        w = jnp.exp(log_w_norm)
+        n_eff = float(1.0 / jnp.sum(w ** 2))
+        n_eff_min = min(n_eff_min, n_eff)
+
+        rng_key, sub = jax.random.split(rng_key)
+        idx = jax.random.choice(sub, N, shape=(N,), p=w)   # multinomial; cheap
+        particles = particles[idx]
+        log_p_curr = log_p_curr[idx]
+
+        # 2. RW-MH at temperature beta_k = k/K with empirical-cov proposal
+        beta_k = k / K
+        emp_cov = jnp.cov(particles.T) + 1e-6 * jnp.eye(d)
+        L_prop = jnp.linalg.cholesky(proposal_scale ** 2 * emp_cov)
+
+        for _ in range(n_mh_steps):
+            rng_key, sub_n, sub_u = jax.random.split(rng_key, 3)
+            noise = jax.random.normal(sub_n, particles.shape, dtype=jnp.float64)
+            proposals = particles + noise @ L_prop.T
+            log_p_prop = jax.vmap(new_ld_fn)(proposals)
+            log_alpha = beta_k * (log_p_prop - log_p_curr)
+            log_u = jnp.log(jax.random.uniform(sub_u, (N,), dtype=jnp.float64))
+            accept = log_u < log_alpha
+            particles = jnp.where(accept[:, None], proposals, particles)
+            log_p_curr = jnp.where(accept, log_p_prop, log_p_curr)
+            accept_sum += float(jnp.mean(accept.astype(jnp.float64)))
+            accept_count += 1
+
+    m1 = jnp.mean(particles, axis=0)
+    diffs = particles - m1[None, :]
+    S1_raw = diffs.T @ diffs / N
+    S1 = S1_raw + 1e-4 * jnp.eye(d)
+    accept_mean = accept_sum / max(accept_count, 1)
+    return m1, S1, n_eff_min, accept_mean
+
+
+# ─────────────────────────────────────────────────────────────────────
 # SF base measure for the rolling-window bridge
 # ─────────────────────────────────────────────────────────────────────
 
@@ -185,6 +289,12 @@ def fit_sf_base(
     blend: float = 0.5,
     entropy_reg: float = 0.0,
     lw_shrinkage: float = 1e-2,
+    q1_mode: str = 'is',
+    annealed_n_stages: int = 3,
+    annealed_n_mh_steps: int = 2,
+    annealed_proposal_scale: float = 0.4,
+    use_q0_cov: bool = False,
+    rng_key=None,
 ):
     """Compute the SF bridge base measure for tempered SMC.
 
@@ -247,17 +357,41 @@ def fit_sf_base(
         diff = u - m0
         return const0 - 0.5 * jnp.sum((L0_inv @ diff) ** 2)
 
-    # ── q_1: importance-weighted moment-match of π_new ───────────────
-    log_q0_vec = jax.vmap(log_q0)(prev)
-    log_p_vec = jax.vmap(new_ld_fn)(prev)
-    log_w_unnorm = log_p_vec - log_q0_vec
-    m1, S1, n_eff = estimate_target_gaussian(prev, log_w_unnorm)
+    # ── q_1: estimate of π_new ───────────────────────────────────────
+    if q1_mode == 'is':
+        # Path A: single-step importance-sampling moment-match
+        log_q0_vec = jax.vmap(log_q0)(prev)
+        log_p_vec = jax.vmap(new_ld_fn)(prev)
+        log_w_unnorm = log_p_vec - log_q0_vec
+        m1, S1, n_eff = estimate_target_gaussian(prev, log_w_unnorm)
+        accept_mean = float('nan')   # not applicable for IS
+    elif q1_mode == 'annealed':
+        # Path B: K-stage tempered-SMC with RW-MH mutation
+        m1, S1, n_eff, accept_mean = estimate_target_gaussian_annealed(
+            prev, new_ld_fn,
+            n_stages=annealed_n_stages,
+            n_mh_steps=annealed_n_mh_steps,
+            proposal_scale=annealed_proposal_scale,
+            rng_key=rng_key,
+        )
+    else:
+        raise ValueError(
+            f"q1_mode must be 'is' or 'annealed', got {q1_mode!r}")
 
-    # ── BW geodesic at t = blend ──────────────────────────────────────
-    m_blend, S_blend = bw_geodesic(
-        m0, S0, m1, S1, t=float(blend),
-        entropy_reg=float(entropy_reg),
-    )
+    # ── Bridge base: BW geodesic, optionally decoupled (cov from q0) ──
+    if use_q0_cov:
+        # Decoupled mode (issue #3 fix 2): trust q1's mean (where the
+        # new posterior lives) but reuse q0's narrow, well-conditioned
+        # cov. Sidesteps the BW-geodesic over-inflation that arises
+        # when the annealed q1 cov is dominated by RW-MH noise rather
+        # than genuine posterior breadth.
+        m_blend = (1.0 - float(blend)) * m0 + float(blend) * m1
+        S_blend = S0
+    else:
+        m_blend, S_blend = bw_geodesic(
+            m0, S0, m1, S1, t=float(blend),
+            entropy_reg=float(entropy_reg),
+        )
     S_blend = S_blend + 1e-4 * jnp.eye(d)
     L_blend = jnp.linalg.cholesky(S_blend)
     L_inv_blend = jax.scipy.linalg.solve_triangular(
@@ -275,6 +409,9 @@ def fit_sf_base(
         'q1_mean': m1,
         'q1_cov': S1,
         'n_eff': n_eff,
+        'accept_mean': accept_mean,
+        'q1_mode': q1_mode,
+        'use_q0_cov': bool(use_q0_cov),
         'blend': float(blend),
         'entropy_reg': float(entropy_reg),
     }
@@ -284,5 +421,6 @@ __all__ = [
     "bw_geodesic",
     "bures_wasserstein_map",
     "estimate_target_gaussian",
+    "estimate_target_gaussian_annealed",
     "fit_sf_base",
 ]

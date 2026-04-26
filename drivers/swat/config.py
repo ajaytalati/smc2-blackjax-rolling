@@ -50,6 +50,11 @@ class SwatRollingConfig:
     bridge_mog_components: int = 2
     sf_blend: float = 0.5              # Schrödinger-Föllmer t in [0,1]
     sf_entropy_reg: float = 0.0        # SF entropic regularisation
+    sf_q1_mode: str = 'is'             # 'is' (Path A) or 'annealed' (Path B)
+    sf_annealed_n_stages: int = 3
+    sf_annealed_n_mh_steps: int = 2
+    sf_annealed_proposal_scale: float = 0.4
+    sf_use_q0_cov: bool = False        # Decoupled mode (issue #3 fix 2)
 
     # ── Frozen (non-estimated) params ────────────────────────────
     # Empty for SWAT v1 — everything in PARAM_PRIOR_CONFIG is estimated.
