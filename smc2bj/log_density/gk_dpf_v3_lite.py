@@ -322,11 +322,30 @@ def make_gk_dpf_v3_lite_log_density(
                 # BUG fix (2026-04-25): position 6 of propagate_fn is the
                 # step index `k`, not the particle-count constant `K`. The
                 # earlier signature `... grid_obs, K, sigma_diag ...` was
-                # silently producing out-of-bounds reads on grid_obs[T_B][K]
+                # silently producing out-of-bounds reads on grid_obs[T_B][k]
                 # (K=400 vs t_steps=96 in the high-res model), corrupting
                 # the extracted bridge state.
+                #
+                # BUG fix (2026-04-26): position 2 of propagate_fn is the
+                # time `t = k * dt`, NOT the bare step index `k`. Models
+                # that read `t` for time-dependent dynamics (e.g. SWAT's
+                # ``C_eff = sin(2π(t - V_c) / 24 + φ)``) saw catastrophic
+                # bridge-state corruption: at SWAT's dt=5/60 h, passing
+                # `t=k` instead of `t=k*dt` scaled time by 12×, putting
+                # C_eff into the wrong phase region. Models whose
+                # ``propagate_fn`` discards `t` via ``del t`` (e.g.
+                # fsa_high_res, which reads all time-dependent values from
+                # ``grid_obs[*][k]``) were silently unaffected — that's
+                # why the bug went undetected through fsa_high_res's
+                # 96.7% mean coverage reproduction.
+                #
+                # The matching MAIN log_density's ``_core_step`` already
+                # computes ``t = jnp.asarray(k * dt, ...)`` (line 186);
+                # this brings ``extract_state_at_step`` into agreement.
+                t_step = jnp.asarray(k * dt, dtype=u.dtype)
                 x_new, pred_lw = model.propagate_fn(
-                    y, k, dt, params, grid_obs, k, sigma_diag, xi, None)
+                    y, t_step, dt, params, grid_obs, k,
+                    sigma_diag, xi, None)
                 obs_lw = model.obs_log_weight_fn(
                     x_new, grid_obs, k, params)
                 return x_new, pred_lw + obs_lw
