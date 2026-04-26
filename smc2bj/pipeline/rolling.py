@@ -142,7 +142,13 @@ def rolling_window_smc(
                         for c in obs_channel_names)
         print(f"    Obs in window: {n_obs_win}")
 
-        # Build the per-window log-density (inner PF)
+        # Build the per-window log-density (inner PF).
+        #
+        # window_start_bin = the GLOBAL bin index of this window's first
+        # bin. Threaded through so models that compute t-of-day
+        # analytically (SWAT's C_eff) see the correct global time, not
+        # the within-window time. Models that ignore `t` via `del t`
+        # (fsa_high_res) are unaffected.
         grid_obs = model.align_obs_fn(window_obs, window_days, dt)
         ld = lik_factory(model, grid_obs,
                          n_particles=smc_cfg.n_pf_particles,
@@ -154,7 +160,8 @@ def rolling_window_smc(
                          ot_n_iter=smc_cfg.ot_n_iter,
                          ot_epsilon=smc_cfg.ot_epsilon,
                          dt=dt, seed=seed + w,
-                         fixed_init_state=fixed_init_state)
+                         fixed_init_state=fixed_init_state,
+                         window_start_bin=int(start))
         T_arr = ld._transforms
 
         if prev_particles is not None:
