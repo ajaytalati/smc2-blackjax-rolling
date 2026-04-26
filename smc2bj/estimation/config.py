@@ -22,8 +22,16 @@ class SMCConfig:
     num_mcmc_steps_bridge: int = 3
     max_lambda_inc_bridge: float = 0.10
     bridge_type: str = 'gaussian'      # 'gaussian' (single Gaussian + LW shrinkage)
-                                       # or 'mog' (2- or 3-component Gaussian mixture)
+                                       # 'mog' (2- or 3-component Gaussian mixture)
+                                       # 'schrodinger_follmer' (BW geodesic between
+                                       #   prev-posterior Gaussian fit and importance-
+                                       #   matched new-posterior estimate; see
+                                       #   smc2bj.estimation.sf_bridge)
     bridge_mog_components: int = 2     # only used when bridge_type == 'mog'
+    sf_blend: float = 0.5              # only used when bridge_type == 'schrodinger_follmer';
+                                       # t in [0, 1] along BW geodesic. 0 = prev posterior,
+                                       # 1 = new-posterior moment-match, 0.5 = midpoint
+    sf_entropy_reg: float = 0.0        # Schrödinger entropic regularisation; 0 = exact OT
 
     # HMC kernel
     hmc_step_size: float = 0.025

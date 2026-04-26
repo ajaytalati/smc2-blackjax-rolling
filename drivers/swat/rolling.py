@@ -131,9 +131,13 @@ def _parse_args(cfg: SwatRollingConfig):
                    help='Max windows (None = full)')
     p.add_argument('--scenario-artifact', default=cfg.default_artifact_dir,
                    help='Path to a Python-Model-Scenario-Simulation artifact dir')
-    p.add_argument('--bridge', choices=('gaussian', 'mog'),
+    p.add_argument('--bridge', choices=('gaussian', 'mog', 'schrodinger_follmer'),
                    default=cfg.bridge_type)
     p.add_argument('--bridge-K', type=int, default=cfg.bridge_mog_components)
+    p.add_argument('--sf-blend', type=float, default=cfg.sf_blend,
+                   help='Schrödinger-Föllmer t in [0, 1] along BW geodesic')
+    p.add_argument('--sf-entropy-reg', type=float, default=cfg.sf_entropy_reg,
+                   help='Schrödinger entropic regularisation; 0 = exact OT')
     p.add_argument('--show-checkpoint', action='store_true')
     return p.parse_args()
 
@@ -152,7 +156,14 @@ def _out_dir(seed: int, n_smc: int, scenario_name: str,
 def main():
     cfg = SWAT_SET_A_CONFIG
     args = _parse_args(cfg)
-    bridge_tag = '' if args.bridge == 'gaussian' else f'mog{args.bridge_K}'
+    if args.bridge == 'gaussian':
+        bridge_tag = ''
+    elif args.bridge == 'mog':
+        bridge_tag = f'mog{args.bridge_K}'
+    elif args.bridge == 'schrodinger_follmer':
+        bridge_tag = f'sf{args.sf_blend:.2f}'
+    else:
+        bridge_tag = args.bridge
     out_dir = _out_dir(args.seed, args.n_smc, cfg.scenario_name, bridge_tag)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -195,6 +206,8 @@ def main():
         max_lambda_inc_bridge=cfg.max_lambda_inc_bridge,
         bridge_type=args.bridge,
         bridge_mog_components=args.bridge_K,
+        sf_blend=args.sf_blend,
+        sf_entropy_reg=args.sf_entropy_reg,
     )
     rolling_cfg = RollingConfig(
         window_days=cfg.window_bins,    # (framework reads as bins; "days" is misnomer)

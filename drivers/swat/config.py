@@ -46,8 +46,10 @@ class SwatRollingConfig:
     max_lambda_inc_bridge: float = 0.15
 
     # ── Bridge base measure ─────────────────────────────────────
-    bridge_type: str = 'gaussian'      # or 'mog'
+    bridge_type: str = 'gaussian'      # or 'mog' or 'schrodinger_follmer'
     bridge_mog_components: int = 2
+    sf_blend: float = 0.5              # Schrödinger-Föllmer t in [0,1]
+    sf_entropy_reg: float = 0.0        # SF entropic regularisation
 
     # ── Frozen (non-estimated) params ────────────────────────────
     # Empty for SWAT v1 — everything in PARAM_PRIOR_CONFIG is estimated.
