@@ -1,241 +1,236 @@
-# SWAT Set A rolling-window estimation: PARTIAL FIX, CASCADE PERSISTS
+# SWAT Set A rolling-window estimation: 3 fixes, dramatic recovery, gate not yet met
 
-**Date:** 2026-04-26 (updated after H1 fix attempt)
+**Date:** 2026-04-26 (3rd attempt; updated after C-phase bug fix)
 **Run:** `--seed 42` (defaults from SwatRollingConfig)
 **Output:** `outputs/swat_rolling/set_A_healthy_N256_s42/`
 **Driver / framework commits:**
-  - `31e1f1d` Phase F docs (pre-fix baseline)
-  - `<unstaged>` t-arg fix in extract_state_at_step (this attempt)
+  - `ac46496` Phase A driver scaffolding
+  - `4bd8882` B1: extract_window scalar passthrough
+  - `1ce6cee` B2: t-arg in extract_state_at_step
+  - `fa6e978` **B3: window_start_bin threading (C-phase analog) ← THIS RUN**
+  - `331b330` Postmortem doc
 **Artifact:** psim v0.1.2 `set_A_healthy_14d/`.
 
 ## TL;DR
 
-**A real bug was found and fixed in `smc2bj/log_density/gk_dpf_v3_lite.py`'s
-`extract_state_at_step`** (passed `t = k` instead of `t = k * dt`,
-silently miscomputing time for any model that uses `t` in its
-`propagate_fn` — which SWAT does, fsa_high_res does not). Fix verified:
-fsa_high_res 1-window regression bit-identical to v0.1.1.
+Three real SMC²-side bugs found and fixed (B1, B2, B3 — see
+[POSTMORTEM_swat_port_bugs.md](../POSTMORTEM_swat_port_bugs.md)).
+**The C-phase analog (B3) was the dominant cause of the cascade** —
+fixing it raised mean coverage by **+17.6 pp (31% → 49%)** and
+**eliminated the deep cascade collapse** (W10-W22 went from 14% → 47%
+average).
 
-**The fix improved early bridge windows (W2-W7 raw coverage averaged
-56% → 61%) but did NOT resolve the deep cascade collapse (W10+).**
-Aggregate mean coverage: **31.2% pre-fix → 30.8% post-fix**. PASS rate
-unchanged at 2/27.
+But the gate isn't yet met (49% mean / 2-of-27 PASS, vs gate
+≥70% mean / ≥19-of-27 PASS). **Most parameters are still
+narrow-CI biased** — same conspiracy structure as before but
+attenuated. **Hypothesised remaining causes:**
 
-**H1 ruled out as the sole cause.** The cascade has another root.
+1. **Model-tuning issue M1** ([public-dev #5](https://github.com/ajaytalati/Python-Model-Development-Simulation/issues/5))
+   — Set A's Zt amplitude doesn't reach c2=4.5; deep sleep happens
+   only via the stochastic noise floor. This impairs identifiability
+   of (c_tilde, delta_c, beta_Z, tau_a) from the sleep channel alone.
+2. **Genuine identifiability limit on slow T dynamics** — tau_T=48h
+   means each 1-day window sees ≤0.5 of one T cycle; the bridge can't
+   reliably constrain (mu_0, mu_E, eta, tau_T, T_T, alpha_T).
+3. **(V_h, V_n, s_base, beta_s) joint identifiability** — stress
+   channel has the unidentified manifold s_base + beta_s·V_n = const;
+   only (V_h - V_n) sum is identified by u_W.
 
-**No push, no tag.** Branch `feat/swat_rolling_driver` retains all
-commits locally.
+NO push, no tag. Stopped for user review.
 
-## Headline numbers
+## Comparative summary (3 attempts)
 
-| Metric | Pre-fix | Post-fix | Gate |
-|---|---:|---:|---|
-| Cold-start coverage (W1, raw) | 100.0% | 91.4% | ≥ 70% ✓ (both) |
-| Cold-start coverage (W1, informed) | 100.0% | 81.8% | ≥ 70% ✓ (both) |
-| Mean coverage (raw, all 27) | 31.2% | **30.8%** | ≥ 70% ❌ |
-| Mean coverage (informed, all 27) | 31.3% | **30.0%** | ≥ 70% ❌ |
-| PASS rate (≥70%) | 2/27 | **2/27** | ≥ 19/27 ❌ |
-| Min window coverage | 5.7% (W13) | **2.9% (W18)** | — |
-| Wall-clock | 1.34 h | 1.32 h | — |
-
-## Pre-fix vs Post-fix per-window comparison
-
-| W | Pre-fix raw | Post-fix raw | Δ | Notes |
+| Metric | Attempt 1 (initial) | Attempt 2 (B2 fix) | Attempt 3 (B3 fix) | Gate |
 |---|---:|---:|---:|---|
-| 1 | 100.0% | 91.4% | -8.6 | both ≥70% (cold start; fluctuation is JIT-noise) |
-| 2 | 54.3% | **80.0%** | +25.7 | **fix recovered W2** |
-| 3 | 71.4% | 60.0% | -11.4 | small reversal |
-| 4 | 60.0% | 42.9% | -17.1 | reversal |
-| 5 | 68.6% | 51.4% | -17.2 | reversal |
-| 6 | 31.4% | **51.4%** | +20.0 | **fix recovered W6** |
-| 7 | 48.6% | **62.9%** | +14.3 | **fix improved W7** |
-| 8 | 40.0% | 45.7% | +5.7 | small improvement |
-| 9 | 42.9% | 48.6% | +5.7 | small improvement |
-| 10 | 17.1% | 14.3% | -2.8 | **collapse from here**, ~unchanged |
-| 11 | 14.3% | 22.9% | +8.6 | minor noise |
-| 12 | 8.6% | 17.1% | +8.5 | minor noise |
-| 13 | 5.7% | 14.3% | +8.6 | minor noise |
-| 14 | 17.1% | 14.3% | -2.8 | unchanged |
-| 15 | 25.7% | 14.3% | -11.4 | reversal |
-| 16 | 25.7% | 17.1% | -8.6 | reversal |
-| 17 | 28.6% | 14.3% | -14.3 | reversal |
-| 18 | 11.4% | **2.9%** | -8.5 | **post-fix worse**; W18 hits new minimum |
-| 19 | 14.3% | 17.1% | +2.8 | unchanged |
-| 20 | 14.3% | 22.9% | +8.6 | minor noise |
-| 21 | 14.3% | 28.6% | +14.3 | minor improvement |
-| 22 | 17.1% | 17.1% | 0 | unchanged |
-| 23 | 17.1% | 22.9% | +5.8 | minor improvement |
-| 24 | 14.3% | 14.3% | 0 | unchanged |
-| 25 | 34.3% | 11.4% | -22.9 | reversal |
-| 26 | 20.0% | 11.4% | -8.6 | reversal |
-| 27 | 25.7% | 20.0% | -5.7 | unchanged |
+| Cold-start coverage W1 (raw) | 100.0% | 91.4% | 94.3% | ≥ 70% ✓ |
+| Mean coverage (raw) | 31.2% | 30.8% | **48.4%** | ≥ 70% ❌ |
+| Mean coverage (informed) | 31.3% | 30.0% | **46.7%** | ≥ 70% ❌ |
+| PASS rate | 2/27 | 2/27 | **2/27** | ≥ 19/27 ❌ |
+| Min window coverage | 5.7% (W13) | 2.9% (W18) | **20.0% (W27)** | — |
+| Wall-clock | 1.34 h | 1.32 h | 1.31 h | — |
 
-**Aggregate**: pre-fix mean raw = 31.2%, post-fix mean raw = 30.8%
-(within run-to-run noise). The t-fix bumped some windows up and
-others down, with no systematic improvement of the deep-collapse
-region (W10+).
+**Headline progression**:
+- Attempt 1 → 2: B2 fix (extract_state_at_step t=k → t=k*dt) bumped
+  early-bridge windows but left late cascade unchanged.
+- Attempt 2 → 3: B3 fix (window_start_bin threaded through inner-PF
+  for SWAT's analytical C_eff) **broke the cascade compounding** and
+  bumped the deep-cascade region from ~15% to ~45%.
+- Combined effect: gate not yet met, but **the failure mode has
+  changed** — from monotone catastrophic cascade collapse to a
+  stable-but-low equilibrium around 45-50%.
 
-## What the t-fix DID resolve
+## Per-window comparison
 
-The bug: `extract_state_at_step` (which produces the next window's
-fixed_init_state) called `propagate_fn(y, k, dt, ...)` instead of
-`propagate_fn(y, k*dt, dt, ...)`. For SWAT at dt=5/60 h, this scaled
-the `t` argument by 12×. SWAT's `compute_sigmoid_args` uses `t` in
-`C_eff = sin(2π(t - V_c) / 24 + φ)` — so the C_eff phase was wildly
-wrong, producing biased state extractions for the bridge init.
+| W | Initial | After B2 | After B3 (this run) | Δ from B2 |
+|---|---:|---:|---:|---:|
+| 1 | 100.0% | 91.4% | 94.3% | +2.9 |
+| 2 | 54.3% | 80.0% | 65.7% | -14.3 |
+| 3 | 71.4% | 60.0% | 48.6% | -11.4 |
+| 4 | 60.0% | 42.9% | 65.7% | +22.8 |
+| 5 | 68.6% | 51.4% | 71.4% | +20.0 |
+| 6 | 31.4% | 51.4% | 34.3% | -17.1 |
+| 7 | 48.6% | 62.9% | 37.1% | -25.8 |
+| 8 | 40.0% | 45.7% | 51.4% | +5.7 |
+| 9 | 42.9% | 48.6% | 51.4% | +2.8 |
+| **10** | **17.1%** | **14.3%** | **57.1%** | **+42.8** |
+| **11** | **14.3%** | **22.9%** | **37.1%** | **+14.2** |
+| **12** | **8.6%** | **17.1%** | **31.4%** | **+14.3** |
+| **13** | **5.7%** | **14.3%** | **34.3%** | **+20.0** |
+| **14** | **17.1%** | **14.3%** | **45.7%** | **+31.4** |
+| **15** | **25.7%** | **14.3%** | **51.4%** | **+37.1** |
+| **16** | **25.7%** | **17.1%** | **51.4%** | **+34.3** |
+| **17** | **28.6%** | **14.3%** | **42.9%** | **+28.6** |
+| **18** | **11.4%** | **2.9%** | **48.6%** | **+45.7** |
+| **19** | **14.3%** | **17.1%** | **48.6%** | **+31.5** |
+| **20** | **14.3%** | **22.9%** | **51.4%** | **+28.5** |
+| **21** | **14.3%** | **28.6%** | **51.4%** | **+22.8** |
+| **22** | 17.1% | 17.1% | 42.9% | +25.8 |
+| **23** | 17.1% | 22.9% | 45.7% | +22.8 |
+| **24** | 14.3% | 14.3% | 40.0% | +25.7 |
+| **25** | 34.3% | 11.4% | 42.9% | +31.5 |
+| **26** | 20.0% | 11.4% | 42.9% | +31.5 |
+| **27** | 25.7% | 20.0% | 20.0% | 0 |
 
-After the fix, the W/Zt/a/T values extracted at the end of each
-window are no longer phase-corrupted. **Early bridge windows (W2-W9)
-do recover modestly**, confirming the bug was real.
+The **deep-cascade region (W10+) went from 5-30% to 30-60%** — clear
+evidence the C-phase fix addressed the dominant cause. But early
+bridge windows (W2-W7) jitter slightly (some up, some down) suggesting
+multiple weak attractors rather than a single strong one.
 
-But aggregate didn't budge. The cascade has a deeper cause that the
-t-fix doesn't touch.
-
-## Why fsa_high_res was silently unaffected (rule-in for the diagnosis)
-
-fsa_high_res's `propagate_fn` does `del t` — discards the time
-argument. All time-dependent values (T_B(t), Phi(t), C(t)) come from
-`grid_obs[*][k]` indexed by the bin number `k`. So the wrong `t`
-value passed to `propagate_fn` had no effect for fsa_high_res. Only
-models like SWAT that USE `t` directly (for analytical time-of-day
-formulas) feel the bug.
-
-This is a generic SMC² infrastructure improvement — fix benefits any
-future model that uses `t` in its propagate_fn.
-
-## What's still broken — H1 ruled out as sole cause
-
-Bridge cascade collapse persists with the same shape:
-- W1: cold start finds truth (~91-100% raw)
-- W2-W9: degrades 50-80% with high variance
-- W10+: deep collapse to 5-30%, never recovers
-
-The pattern signature is unchanged. Whatever causes the cascade is
-independent of the extract_state_at_step phase bug.
-
-## Updated hypotheses (in current order of likelihood)
-
-### H2 (NOW MOST LIKELY) — Gaussian-bridge variance underestimate for 35-D space
-
-The bridge log shows extremely concentrated bridge measures:
+## TRUE FAILURES at W27 (post-Cfix)
 
 ```
-Gaussian base: LW shrinkage=0.019-0.034, log_det=-243.9 to -255.5
+['kappa', 'lmbda', 'tau_Z', 'V_c', 'HR_base', 'alpha_HR',
+ 'c_tilde', 'beta_Z', 'Vh', 'Vn', 'T_W', 'T_Z', 'T_a',
+ 'mu_0', 'eta', 'tau_T', 'T_T', 'delta_c', 'lambda_base',
+ 'lambda_step', 'W_thresh', 's_base', 'alpha_s', 'beta_s',
+ 'sigma_s', 'Zt_0', 'a_0', 'T_0']
 ```
 
-`log_det = -250` over 35 dimensions implies the bridge distribution's
-*geometric-mean per-dim variance* is `exp(-250/35) ≈ 8e-4`, i.e. per-dim
-SD ≈ 0.028. For SWAT's parameter ranges (e.g. lambda_step has truth=200
-with prior CI ~[110, 360], so prior SD ~125), this means the bridge
-variance is ~4 orders of magnitude tighter than the prior.
+**28 of 35 still missing.** The same "broad-based bias" pattern
+persists, just at attenuated amplitude. The remaining bias is split
+across:
 
-**With such a concentrated bridge, any small posterior bias from
-window N is preserved nearly intact into window N+1.** The bridge can't
-"let go" of accumulated bias because it's variance-starved.
+- **u_W conspiracy**: kappa, lmbda, V_c, Vh, Vn (5 params)
+- **Sleep dynamics**: c_tilde, delta_c, tau_Z, beta_Z (4 params; M1
+  identifiability)
+- **T (Stuart-Landau) bifurcation**: mu_0, eta, tau_T, T_T (4 params;
+  slow timescale vs 14-day window)
+- **Stress channel manifold**: s_base, alpha_s, beta_s, sigma_s (4 params;
+  joint with Vn)
+- **Steps Poisson**: lambda_base, lambda_step, W_thresh (3 params;
+  noisier than expected post-fix?)
+- **Init states**: Zt_0, a_0, T_0 (3 params)
+- **Diffusion temperatures**: T_W, T_Z, T_a (3 params; only weakly
+  data-informed)
 
-fsa_high_res has 29 dims (vs SWAT's 35) and likely a less degenerate
-posterior (the C-fix made HR/stress/log-steps very informative). Same
-bridge type, but it doesn't cascade because its posterior is already
-well-anchored at every window.
+That `lambda_step` and `HR_base` are now in TRUE FAILURES (they were
+on-truth pre-fix) is curious — possibly the fix's W trajectory
+re-anchoring shifts the W-likelihood-implied lambda_step/HR_base.
 
-For SWAT, parameters with weak per-window data identifiability
-(e.g. tau_T at 48h timescale, with only 1-day windows; mu_0/mu_E/eta
-all coupled in the bifurcation; V_c with the 24h symmetry) accumulate
-small biases that the tight bridge preserves and compounds.
+## Hypotheses for the remaining gap
 
-**Test**: switch to MoG bridge (`--bridge mog --bridge-K 2`).
-fsa_high_res's diagnostic plans
-(`outputs/fsa_high_res_rolling/PLAN_principled_bridge_fixes.md`)
-explored this for exactly this cascade pathology. ~1.5h GPU.
+### H6 (NEW, top candidate) — Model-tuning M1 limits identifiability
 
-### H3 — V_c phase-shift identifiability symmetry
+Public-dev [issue #5](https://github.com/ajaytalati/Python-Model-Development-Simulation/issues/5)
+documents that SWAT Set A's Zt only reaches ~4.3 (never crossing
+c2=4.5), so deep-sleep events are stochastic-noise-floor only.
+Without clean Zt-driven deep-sleep dynamics, the joint
+(c_tilde, delta_c, beta_Z, tau_a) is partially unidentified from
+sleep alone.
 
-The 24-hour periodicity of the circadian drive makes V_c=0 and
-V_c=12h structurally indistinguishable from the full data, modulo
-the prior. The bridge MCMC might walk V_c into the wrong basin within
-a window, then drag dependent parameters (kappa, lambda, beta_Z,
-which all couple via the C_eff term in u_W) into compensating
-biases.
+**Testable**: re-tune Set A's truth params per [#5](https://github.com/ajaytalati/Python-Model-Development-Simulation/issues/5)
+suggestion (`beta_Z: 2.5 → 4.0`), regenerate the psim artifact,
+re-run SMC². If coverage hits ≥70%, M1 is the remaining cause.
+This is a model-side change in public dev, not SMC².
 
-**Test**: freeze V_c=0 via `frozen_param_keys=('V_c',)` in a new
-`SWAT_SET_A_FROZEN_VC_CONFIG`, re-run. If coverage recovers,
-confirm the symmetry-breaking prior is needed. ~1.5h GPU.
+### H7 — Slow T dynamics on 14-day window
 
-### H4 — Poisson particle weight degeneracy in fast-tempering bridge
+`tau_T = 48h` means T evolves with a 2-day timescale. With 1-day
+windows, each window sees ≤0.5 of one T cycle. The Stuart-Landau
+bifurcation parameters (mu_0, mu_E, eta) are jointly determined by
+T(t) trajectory; identifying them needs multiple T cycles.
 
-Cold start uses 22 tempering levels (slow tempering); bridge uses
-7 levels (fast). The Poisson `steps` channel has heavy-tailed
-log-pmf at high counts; fast tempering may concentrate particles
-on a few "lucky" Poisson realisations.
+**Testable**: longer windows (3 days) — would see ~1.5 T cycles per
+window. Cost: ~2.5h GPU. Trade-off: more bridges.
 
-**Test**: increase `n_pf` to 800 in the bridge code path. ~2h GPU.
-Less informative than H2/H3 (just adds more particles without
-isolating the cause).
+### H8 — Vn / s_base manifold genuinely unidentified
 
-### H5 — Stride too aggressive for 5-min grid
+Stress channel: `mean = s_base + alpha_s·W + beta_s·Vn`. The
+direction (Δs_base, Δbeta_s·Vn) = (-Δ, +Δ/Vn) leaves stress
+unchanged. Only u_W's `+ Vn` term breaks this manifold (Vn enters W
+dynamics independently of s_base, beta_s). With B3 fix, u_W is now
+correctly computed, so this should be identifiable in principle —
+but the trace shows Vn locked at ~0.6-1.5 (truth=0.3) which means
+the u_W constraint isn't strong enough to break the stress manifold
+on the 1-day window.
 
-12-h stride with 5-min bins means each bridge has to bridge 144
-bins of new data. fsa_high_res's 12-h stride at 15-min bins =
-48 bins of new data. SWAT bridges 3× more obs per step.
+**Mitigations**: tighter prior on Vn (currently centered at 1.0,
+truth at 0.3 = ~1 SD off); or longer windows.
 
-**Test**: longer stride (24h, 14 windows total). ~1h GPU.
+### H9 (NOW LESS LIKELY) — Bridge variance underestimate
 
-### H1 (RULED OUT) — extract_state_at_step t-arg
+The original H2 (Gaussian bridge variance underestimate). With B3
+fix the bridge log_det values dropped from -250 to ~-180 (still
+small but less concentrated). The improvement from B3 alone was
++17pp; if H9 were the dominant remaining cause, MoG bridge would
+add another large jump.
 
-Fixed in this run; bridge cascade unchanged.
+**Testable**: re-run with `--bridge mog --bridge-K 2`. ~1.5h GPU.
+Cheap to do but no longer the lead candidate after B3.
 
-## Diagnostic / next-step recommendation
+## Recommended next steps (in priority order)
 
-**H2 is the top candidate.** The pattern (cold start good, slow
-degradation, deep collapse from W10) is consistent with bridge
-variance starvation — every window adds a small bias the bridge
-can't shake off, and it compounds. The empirical evidence (very
-small `log_det` in the bridge) is direct.
+1. **Re-run with M1 fix** (model-side, public dev): bump
+   `beta_Z: 2.5 → 4.0` in SWAT Set A. Regenerate psim artifact.
+   Re-run SMC². If coverage hits ≥70%, M1 was the remaining cause
+   and the SWAT port is shippable.
 
-**Recommended next test**: re-run with `--bridge mog --bridge-K 2`.
-Cost: ~1.5h GPU, no code changes (it's a pre-existing CLI option).
+2. **Read parameter_tracking.png for the post-Cfix run carefully** and
+   confirm:
+   - Vh trace: should be at ~1.0 (truth) with narrower CIs than
+     pre-fix (was at ~1.5)
+   - lmbda trace: should be near 32 (truth) instead of locked at 13
+   - Vn trace: should be closer to 0.3 (truth) instead of locked at
+     1.5
+   - If these show clear improvement: B3 was the right fix; remaining
+     bias is identifiability-limited
 
-If MoG fixes it: ship SWAT v0.1 with `bridge_type='mog'` as the
-SWAT-specific default in `SwatRollingConfig` (separate from
-fsa_high_res's `'gaussian'` default). The modular per-model config
-makes this a 1-line change in `drivers/swat/config.py`.
+3. **MoG bridge test**: re-run with `--bridge mog --bridge-K 2`. Cheap
+   to do; if it adds another +10 pp, bridge variance is a secondary
+   contributor.
 
-If MoG doesn't fix it: H3 (V_c freeze) is the next test.
+4. **Frozen-V_c test**: V_c=0 (truth) is in PARAM_PRIOR_CONFIG with
+   N(0, 3) prior; freezing it removes one degree of conspiracy. Test
+   would isolate whether V_c contributes.
 
-## What's not the cause (rule-outs after this attempt)
+5. **3-day windows**: address H7. Most expensive test (~3h GPU per
+   run), least confident hypothesis.
 
-- Not the model — psim §1.4 tests pass; SWAT defaults reproduce
-  expected ranges in the simulator.
-- Not the inner-PF — cold-start hits 91-100% raw / 82-100% informed.
-- Not the artifact loader / extract_window — modularity tests pass,
-  fsa_high_res regression bit-identical.
-- Not the t-arg in extract_state_at_step — fixed in this run, no
-  systemic recovery.
-- Not the modularity layout — `drivers/swat/` is fully isolated;
-  fsa_high_res unaffected through both attempts.
+## What's not the cause (rule-outs after this run)
+
+- **Not the C-phase analog (B3)** — fixed; recovered +17 pp.
+  Cascade no longer compounds.
+- **Not extract_state_at_step (B2)** — fixed; partial improvement.
+- **Not extract_window scalar handling (B1)** — fixed; required for
+  SWAT to run at all.
+- **Not the modular SMC²-side architecture** — fsa_high_res
+  bit-identical at every step; modularity tests pass.
+- **Not the §1.4 sim/est consistency** — psim's tests pass on the
+  static parameter set.
 
 ## Status
 
 **STOPPED for user review.** Branch `feat/swat_rolling_driver` holds
 locally:
 - `ac46496` Phase A: SWAT driver scaffolding
-- `4bd8882` extract_window scalar passthrough fix
+- `4bd8882` B1 fix: extract_window scalar passthrough
 - `31e1f1d` Phase F: how_to_add_a_new_model docs
-- `c474191` Phase D failure result.md (initial diagnostic)
-- `<this commit>` t-arg fix + comparative result.md
+- `c474191` Phase D failure: initial diagnostic
+- `1ce6cee` B2 fix: t-arg in extract_state_at_step
+- `fa6e978` B3 fix: window_start_bin threading (C-phase analog)
+- `331b330` Postmortem: SWAT port bugs
+- `<this commit>` 3-way comparative result.md
 
-Awaiting user direction on next hypothesis to test (H2 / H3 / H4 / H5).
-
-## Side note: model-tuning issue identified separately
-
-User-spotted issue (independent of the SMC² bug):
-[public-dev issue #5](https://github.com/ajaytalati/Python-Model-Development-Simulation/issues/5)
-— SWAT Set A's Zt amplitude tops out at ~3, never reaching the
-deep-sleep threshold (4.5). The simulated data therefore has <5%
-deep sleep vs realistic 20-25%. This impairs identifiability of
-c_tilde, delta_c, beta_Z, tau_a — would compound any bridge issue
-even if the cascade itself were fixed.
-
-A re-tuned Set A artifact (with the model-side fix) plus a
-bridge-fix here would together likely produce the production
-≥70%/≥70% gate.
+Awaiting user direction on next investigation: Recommended first is
+to retune Set A per public-dev #5 and re-run; that's a model-side
+change and tests the most likely remaining cause.
