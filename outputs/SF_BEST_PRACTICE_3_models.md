@@ -1,27 +1,39 @@
-# Schrödinger-Föllmer bridge: best practice across SWAT and fsa_high_res
+# Schrödinger-Föllmer bridge: best practice across 3 models
 
 **Date:** 2026-04-27
-**Branch:** `feat/schrodinger_follmer_bridge`
-**Goal:** establish a single, consistent SF-bridge tuning that beats the
-Gaussian bridge on both models (35-D SWAT and 29-D fsa_high_res).
+**Branch:** `feat/schrodinger_follmer_bridge` + `feat/sir_driver`
+**Goal:** establish a single, consistent SF-bridge tuning that beats
+the Gaussian bridge across the production models (35-D SWAT, 29-D
+fsa_high_res, 7-D SIR).
 
 ## TL;DR
 
 A single configuration —
 **`bridge_type='schrodinger_follmer', sf_q1_mode='annealed', sf_use_q0_cov=True, sf_blend=0.7, sf_annealed_n_stages=3, sf_annealed_n_mh_steps=5`**
-— **strictly beats the Gaussian bridge on both models**:
+— **beats the Gaussian bridge on all three production models**:
 
-| Model | Bridge | Mean cov | PASS rate |
+| Model | Bridge | Mean cov | Δ over Gauss |
 |---|---|---:|---:|
-| **SWAT** Set A (35-D, post-tune priors-corrected) | Gauss | 49.8% | 4 / 27 |
-| **SWAT** | **SF Path B-fixed** | **82.3%** | **24 / 27** |
-| **fsa_high_res** C0 (29-D) | Gauss | 96.8% | 27 / 27 |
-| **fsa_high_res** | **SF Path B-fixed** | **98.5%** | **27 / 27** |
+| **SWAT** Set A (35-D, post-tune priors-corrected) | Gauss | 49.8% | — |
+| **SWAT** | **SF Path B-fixed** | **82.3%** | **+32.5 pp** |
+| **fsa_high_res** C0 (29-D) | Gauss | 96.8% | — |
+| **fsa_high_res** | **SF Path B-fixed** | **98.5%** | **+1.7 pp** |
+| **SIR** Set A (7-D, Anderson-May 1978 boarding-school flu) | Gauss | 38.1% | — |
+| **SIR** | **SF Path B-fixed** | **42.9%** raw / **61.7%** inf | **+4.8 / +11.7 pp** |
 
-Same code, same config knobs, no model-specific tuning. SWAT gets a
-**+32.5 pp** mean-coverage lift and **+20 PASS windows**; fsa_high_res
-already hit ceiling on PASS so the lift is the +1.7 pp on raw mean and
-the cleaner narrowness of the bridge (smaller log_det → tighter posterior).
+Same code, same config knobs, no per-model tuning. SWAT gets a +32.5 pp
+mean-coverage lift; fsa_high_res +1.7 pp (it was already at 96.8% so
+the headroom is small); SIR +4.8 pp raw / +11.7 pp on data-informed
+parameters specifically (the additional info on the params the data
+actually constrains).
+
+The SIR lift is smaller in raw terms because SIR has well-known
+cases-only identifiability limits (β·ρ degenerate without contact
+tracing or extra channels) — the inference is hitting an *information
+ceiling*, not a bridge ceiling. On the parameters where the data
+shrinks the prior CI, SF beats Gauss by +11.7 pp, matching the
+magnitude of the bridge benefit on the other two models *for the
+identifiable subspace*.
 
 This recommends `SF Path B-fixed` as the **default bridge** going
 forward, with the Gaussian bridge demoted to a fallback. The Gaussian

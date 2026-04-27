@@ -107,14 +107,22 @@ def _prior_mean(ptype: str, pargs: tuple) -> float:
     return 0.0
 
 
-def _cold_start_init() -> jnp.ndarray:
-    """1-D init [I_0] from prior mean.
+def _cold_start_init(sir_estimation) -> jnp.ndarray:
+    """1-D init [I_0] from the SCENARIO'S prior mean.
 
-    The 2-D state is built by SIR_ESTIMATION.make_init_state_fn which
-    derives S_0 = N - I_0 from the frozen N. Inner PF only needs I_0.
+    Reads from ``sir_estimation.init_state_prior_config``, which the
+    factory has already merged with any per-set ``param_prior_overrides``.
+    Using the module-level ``INIT_STATE_PRIOR_CONFIG`` directly would
+    always return Set A's I_0=1, even on Set B/C/D where truth I_0 is
+    5/10/10 respectively — that mismatch was hiding behind a 0% W1
+    coverage on Set C.
+
+    The 2-D state [S, I] is built by SIR_ESTIMATION.make_init_state_fn
+    which derives S_0 = N - I_0 from the frozen N. Inner PF only needs I_0.
     """
+    init_cfg = sir_estimation.init_state_prior_config
     return jnp.array([
-        _prior_mean(*INIT_STATE_PRIOR_CONFIG['I_0']),
+        _prior_mean(*init_cfg['I_0']),
     ], dtype=jnp.float32)
 
 
@@ -300,7 +308,7 @@ def main():
     # 6. Rolling SMC²
     print(f"\nStep 2: Rolling SMC² ({cfg.n_bins_total} bins, "
           f"{cfg.window_bins}-bin windows, {cfg.stride_bins}-bin stride)")
-    cold_init = _cold_start_init()
+    cold_init = _cold_start_init(sir_estimation)
     t0 = time.time()
     results, _T_arr = rolling_window_smc(
         bundle['obs_data'],

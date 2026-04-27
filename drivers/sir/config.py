@@ -47,9 +47,13 @@ class SirRollingConfig:
     window_bins: int = 168          # 7 days
     stride_bins: int = 84           # 3.5 days
 
-    # ── SMC² particle counts (proportional to dim — SIR is 7-D) ───
-    n_smc: int = 128                # half of SWAT's 256 (SIR is 7-D vs 35-D)
-    n_pf: int = 200                 # half of SWAT's 400
+    # ── SMC² particle counts ──────────────────────────────────────
+    # Started at N_SMC=128, N_PF=200 (proportional to SIR's 7-D vs SWAT's
+    # 35-D), but empirically the smaller counts under-resolve SIR's sharp
+    # Poisson-cases likelihood: Set A jumped from 19% mean coverage at
+    # 128/200 to 42.9% at 256/400. Keeping SWAT's defaults for safety.
+    n_smc: int = 256
+    n_pf: int = 400
 
     # ── SMC² tempering (inherits SWAT's well-tuned values) ───────
     target_ess_frac: float = 0.30
