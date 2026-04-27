@@ -51,6 +51,48 @@ python drivers/fsa_real_obs_5yr_rolling.py --seed 42 --condition C0
 python drivers/fsa_high_res_rolling.py --seed 42
 ```
 
+## Recommended bridge: Schrödinger-Föllmer Path B (decoupled)
+
+**A single SF-bridge config strictly beats the Gaussian bridge on both
+production models (no per-model tuning):**
+
+```python
+SMCConfig(
+    bridge_type='schrodinger_follmer',
+    sf_q1_mode='annealed',           # K-stage tempered SMC for q1 (issue #1 fix)
+    sf_use_q0_cov=True,              # decoupled location/scale (issue #3 fix)
+    sf_blend=0.7,                    # tuned vs 0.5 / 0.85 / 1.0
+    sf_annealed_n_stages=3,
+    sf_annealed_n_mh_steps=5,        # tuned vs 2 / 8
+    sf_annealed_proposal_scale=0.4,  # Roberts-Gelman-Gilks for d ~ 30-35
+)
+```
+
+Add to either driver via CLI:
+
+```bash
+PYTHONPATH=. python drivers/fsa_high_res_rolling.py --seed 42 \
+    --bridge schrodinger_follmer --sf-q1-mode annealed \
+    --sf-use-q0-cov --sf-blend 0.7 --sf-annealed-n-mh-steps 5
+
+PYTHONPATH=. python -m drivers.swat.rolling --seed 42 \
+    --bridge schrodinger_follmer --sf-q1-mode annealed \
+    --sf-use-q0-cov --sf-blend 0.7 --sf-annealed-n-mh-steps 5
+```
+
+Results vs the Gaussian bridge:
+
+| Model (dim) | Gauss | SF Path B-fixed |
+|---|---:|---:|
+| **fsa_high_res** C0 (29-D) | 96.8% / 27-of-27 PASS | **98.5% / 27-of-27** |
+| **SWAT** Set A (35-D) | 49.8% / 4-of-27 PASS | **82.3% / 24-of-27** |
+
+The SF impl lives in [`smc2bj/estimation/sf_bridge.py`](smc2bj/estimation/sf_bridge.py); the
+debug-and-tune story across three failed designs (closing
+[#1](https://github.com/ajaytalati/smc2-blackjax-rolling/issues/1) and
+[#3](https://github.com/ajaytalati/smc2-blackjax-rolling/issues/3))
+is documented in [`outputs/SF_BEST_PRACTICE_2_models.md`](outputs/SF_BEST_PRACTICE_2_models.md).
+
 ## Adding a new model
 
 Models live canonically in the public dev repo
