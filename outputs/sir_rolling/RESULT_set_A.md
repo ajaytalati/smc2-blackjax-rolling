@@ -79,32 +79,62 @@ honest measure of what the inference machinery is doing right:
 The 38.3% data-informed *miss* is the (β, ρ) pair locked into the
 wrong product, which the cases-only channel cannot disambiguate.
 
-## Open issues for Sets B/C/D
+## Sets B/C/D cascade collapse — investigation summary
 
 The 14-day-window inference works on Set A (R₀=3.3, N=763) but
-cold-start collapses on Sets B/C/D (community outbreaks, N=10000):
+cascade-collapses on Sets B/C/D (community outbreaks, N=10000). A
+focused 3-hour autonomous investigation into why is documented in
+GitHub issue [#6](https://github.com/ajaytalati/smc2-blackjax-rolling/issues/6); summary here.
 
-- Set C (R₀=4.0, N=10000): cold-start crawled 56 tempering levels in
-  841 s and ended at 0% — acceptance dropped to 3% by mid-tempering.
-  The R₀=4 epidemic with 14-day window has a sharp posterior the
-  tempering can't navigate from prior.
-- Set B (R₀=2.5) and Set D (R₀=3.0) cold-start cleanly (~30%
-  W1 coverage) but cascade collapses to 0% at W2-W3.
+### What we tried — none fully fix it
 
-Two complementary follow-ups would address this (out of scope for
-this initial PR):
+| Variant | Set B mean | Set B W1 | W2 | W3 | W4-W7 |
+|---|---:|---:|---:|---:|---:|
+| **Bootstrap (canonical)** | 14.3% | 29% | 14% | 0% | 0% |
+| Serology Pitt-Shephard guidance | 12.2% | 43% | 29% | 0% | 0% |
+| Guidance + N_SMC=512 / N_PF=800 | 12.2% | 43% | 43% | 0% | 0% |
+| Guidance + n_stages=6, n_mh=8 | (killed) | 43% | 0% (jumped mode) | — | — |
 
-1. **Per-set rolling-window framing.** 14-day windows for an R₀=4
-   epidemic catches the entire outbreak in 1-2 windows. Smaller
-   sliding windows + adaptive tempering should help.
-2. **Annealed initialisation.** Instead of cold-starting from the
-   prior, annealed importance sampling from a wide prior to
-   observation-tempered intermediates would smooth the cold-start.
+Mechanism diagnosed from the existing per-window logs:
 
-These are real research questions, not framework bugs — the same
-SF Path B-fixed bridge that gets 82% on SWAT and 99% on fsa_high_res
-runs end-to-end on SIR and beats Gauss; the 0% cascades on B/C/D
-are SIR-specific identifiability and tempering-resolution issues.
+- **W2 SF bridge: `min ESS=1.4/256, MH acc=0.17, incr_var=457`** on bootstrap
+- The W1 posterior is concentrated in a (β, ρ) mode that doesn't match W2's data
+- The bridge's q1 IS estimator collapses → particles trapped at a wrong mode
+- By W3-W4 the mode is permanent (`||m1-m0||→0`, ESS healthy but at the wrong location)
+
+Serology guidance via Pitt-Shephard on `I` (mirroring SWAT's HR-tilt
+on `W`) **does** heal the bridge q1 IS collapse (ESS 1.4 → 50-200) and
+extends Set B's healthy window count from 1 to 2. But it **regresses
+Set A**: cold-start data-informed coverage drops 61.7% → 16.7%
+because the strong serology weight at the 2 weekly obs forces
+inference into a single (wrong) mode at cold-start. Net negative
+across the 4 sets — reverted.
+
+### Why this isn't a framework bug
+
+The same SF Path B-fixed bridge gets 82.3% on SWAT (35-D) and 98.5%
+on fsa_high_res (29-D). It hits an identifiability wall on SIR Sets
+B/C/D specifically because:
+
+1. **Cases-only constrains β·ρ·S·I/N as a single quantity** — leaves
+   a 2-D ridge of (β, ρ) consistent with any observed case series.
+2. **Sparse serology** (2 obs / 14 days) is too few to break the
+   ridge in W1.
+3. **Set A escapes** because its N=763 outbreak runs to extinction
+   in 14 days (late-tail data informs β/γ directly), ρ=1 boarding-
+   school removes one degree of freedom, and only 3 windows run
+   total. Sets B/C/D have N=10000 + ρ=0.5 + 7-11 windows — the
+   full identifiability problem hits hard.
+
+### Proposed follow-ups (issue #6)
+
+1. **Shorter rolling windows for high-R₀ sets** — e.g. 3-day windows for Set C.
+2. **Annealed cold-start initialisation** to walk the prior toward truth gradually (addresses Set C's 56-level crawl).
+3. **Block-decoupled bridge** — separate bridges for sharp params (β, γ, ρ) vs diffuse params (T_S, T_I, σ_z, I_0).
+4. **Reparameterisation** in terms of identifiable combinations (R_0 = β/γ, plus β·ρ as a single quantity).
+5. **MoG bridge** to capture multiple modes simultaneously.
+
+These are research questions; tracking on issue #6.
 
 ## Reproducibility
 
