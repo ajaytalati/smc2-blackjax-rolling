@@ -80,10 +80,11 @@ PYTHONPATH=. python -m drivers.swat.rolling --seed 42 \
     --sf-use-q0-cov --sf-blend 0.7 --sf-annealed-n-mh-steps 5
 ```
 
-Results vs the Gaussian bridge:
+Results vs the Gaussian bridge across the three production models:
 
 | Model (dim) | Gauss | SF Path B-fixed |
 |---|---:|---:|
+| **glucose_insulin** Set A (9-D, Bergman 1979 — *canonical basic test*) | 79.4% / 6-of-7 PASS | **81.0% / 7-of-7** |
 | **fsa_high_res** C0 (29-D) | 96.8% / 27-of-27 PASS | **98.5% / 27-of-27** |
 | **SWAT** Set A (35-D) | 49.8% / 4-of-27 PASS | **82.3% / 24-of-27** |
 
@@ -91,7 +92,13 @@ The SF impl lives in [`smc2bj/estimation/sf_bridge.py`](smc2bj/estimation/sf_bri
 debug-and-tune story across three failed designs (closing
 [#1](https://github.com/ajaytalati/smc2-blackjax-rolling/issues/1) and
 [#3](https://github.com/ajaytalati/smc2-blackjax-rolling/issues/3))
-is documented in [`outputs/SF_BEST_PRACTICE_2_models.md`](outputs/SF_BEST_PRACTICE_2_models.md).
+is documented in [`outputs/SF_BEST_PRACTICE_3_models.md`](outputs/SF_BEST_PRACTICE_3_models.md).
+
+`glucose_insulin` (the Bergman 1981 extended-minimal-model) is the
+**canonical basic test model** — the smallest production system
+exercising the full mixed-likelihood code path. Closed-loop insulin
+pumps run rolling-window MPC over inferred posteriors of essentially
+this SDE in production clinical use.
 
 ## Adding a new model
 
