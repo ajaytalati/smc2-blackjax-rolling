@@ -70,6 +70,7 @@ def make_gk_dpf_v3_lite_log_density(
         dt: float = 5.0 / 60.0,
         seed: int = 42,
         fixed_init_state: 'jnp.ndarray | None' = None,
+        window_start_bin: int = 0,
 ) -> Callable:
     """Build the v3-lite (systematic + Liu-West + OT rescue) log-density.
 
@@ -93,6 +94,20 @@ def make_gk_dpf_v3_lite_log_density(
         ot_epsilon: Sinkhorn entropic regularisation.  Default 0.5.
         dt: grid step size.
         seed: RNG seed.
+        window_start_bin: rolling-window's GLOBAL start (in bin units).
+            Used so that ``t = (window_start_bin + k) * dt`` reflects the
+            ABSOLUTE time-of-day for models whose ``propagate_fn`` uses
+            ``t`` to compute time-of-day-dependent quantities (e.g.
+            SWAT's ``C_eff = sin(2π(t - V_c)/24 + φ)``). Defaults to 0
+            for the cold-start window. Models that ignore ``t`` (like
+            fsa_high_res, which does ``del t`` in ``propagate_fn`` and
+            reads C from ``grid_obs['C']``) are unaffected by this
+            value.
+
+            ALSO passed as ``time_offset`` to ``model.shard_init_fn``
+            so that any analytical state initialisation (e.g. SWAT's
+            C(0) = sin(2π·t_start/24 + φ)) reflects the window's true
+            global start time, not the within-window t=0.
 
     Returns:
         JIT-compiled log_density(u) -> scalar.
@@ -154,6 +169,11 @@ def make_gk_dpf_v3_lite_log_density(
 
     # Fixed init state: [B_0, F_0, A_0] passed externally (not estimated)
     _fixed_init = fixed_init_state
+    # Window-start global offset (in bin units). 0 for cold-start;
+    # rolling driver passes the actual window's start_bin for w >= 1
+    # so that t-of-day-dependent dynamics see global time, not within-
+    # window time. fsa_high_res ignores both via `del t` and `del time_offset`.
+    _w_start = jnp.int32(window_start_bin)
 
     @jax.jit
     def log_density(u):
@@ -162,7 +182,7 @@ def make_gk_dpf_v3_lite_log_density(
         init   = _fixed_init  # externally fixed [B_0, F_0, A_0]
         sigma_diag   = model.diffusion_fn(params)
 
-        base      = model.shard_init_fn(jnp.int32(0), params, exogenous, init)
+        base      = model.shard_init_fn(_w_start, params, exogenous, init)
         key0      = jax.random.PRNGKey(seed)
         key0, ik  = jax.random.split(key0)
         noise_init = jax.random.normal(ik, (K, n_s))
@@ -183,7 +203,9 @@ def make_gk_dpf_v3_lite_log_density(
             """Core PF: propagate, weight update, systematic+LW."""
             key, kp, kn, kr = jax.random.split(key, 4)
             rk = jax.random.fold_in(key, jnp.int32(7))
-            t = jnp.asarray(k * dt, dtype=u.dtype)
+            # GLOBAL time = (window_start_bin + k) * dt — accurate
+            # for time-of-day-dependent dynamics across rolling windows.
+            t = jnp.asarray((_w_start + k) * dt, dtype=u.dtype)
 
             noise = jax.random.normal(kn, (K, n_s))
 
@@ -296,13 +318,16 @@ def make_gk_dpf_v3_lite_log_density(
         Used to extract smoothed [B, F, A] at the overlap point for the
         next window's fixed initial state. Uses the same core PF as
         log_density but saves particles at target_step.
+
+        Uses the same window_start_bin offset as log_density so the
+        extracted state's time-of-day-dependent dynamics are correct.
         """
         theta  = unconstrained_to_constrained(u, T_arr)
         params = theta[:model.n_params]
         init   = _fixed_init
         sigma_diag = model.diffusion_fn(params)
 
-        base   = model.shard_init_fn(jnp.int32(0), params, exogenous, init)
+        base   = model.shard_init_fn(_w_start, params, exogenous, init)
         key0   = jax.random.PRNGKey(seed)
         key0, ik = jax.random.split(key0)
         noise_init = jax.random.normal(ik, (K, n_s))
@@ -322,11 +347,27 @@ def make_gk_dpf_v3_lite_log_density(
                 # BUG fix (2026-04-25): position 6 of propagate_fn is the
                 # step index `k`, not the particle-count constant `K`. The
                 # earlier signature `... grid_obs, K, sigma_diag ...` was
-                # silently producing out-of-bounds reads on grid_obs[T_B][K]
+                # silently producing out-of-bounds reads on grid_obs[T_B][k]
                 # (K=400 vs t_steps=96 in the high-res model), corrupting
                 # the extracted bridge state.
+                #
+                # BUG fix (2026-04-26 part 1): position 2 of propagate_fn
+                # is the time, not the bare step index `k`. Originally
+                # passed `t=k`; corrected to use a time computation.
+                #
+                # BUG fix (2026-04-26 part 2): the time MUST be the
+                # GLOBAL time `(_w_start + k) * dt` (where _w_start is
+                # the window's bin-offset), NOT the within-window
+                # `k * dt`. For models that compute time-of-day
+                # analytically (e.g. SWAT's ``C_eff = sin(2π(t - V_c)/24 + φ)``),
+                # within-window time resets the phase every window —
+                # producing the C-phase pathology familiar from the
+                # high_res_FSA postmortem. fsa_high_res unaffected
+                # because its propagate_fn does ``del t``.
+                t_step = jnp.asarray((_w_start + k) * dt, dtype=u.dtype)
                 x_new, pred_lw = model.propagate_fn(
-                    y, k, dt, params, grid_obs, k, sigma_diag, xi, None)
+                    y, t_step, dt, params, grid_obs, k,
+                    sigma_diag, xi, None)
                 obs_lw = model.obs_log_weight_fn(
                     x_new, grid_obs, k, params)
                 return x_new, pred_lw + obs_lw

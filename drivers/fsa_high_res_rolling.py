@@ -270,12 +270,26 @@ def _parse_args():
     p.add_argument('--n-pf', type=int, default=400)
     p.add_argument('--windows', type=int, default=None,
                    help='Max windows (None = full 27; 1 = fast parity test)')
-    p.add_argument('--bridge', choices=('gaussian', 'mog'),
+    p.add_argument('--bridge', choices=('gaussian', 'mog', 'schrodinger_follmer'),
                    default='gaussian',
-                   help='Bridge base measure: single Gaussian (default) or '
-                        'K-component mixture of Gaussians')
+                   help='Bridge base measure: single Gaussian (default), '
+                        'K-component mixture of Gaussians, or Schrödinger-Föllmer '
+                        '(Bures-Wasserstein geodesic; see smc2bj.estimation.sf_bridge)')
     p.add_argument('--bridge-K', type=int, default=2,
                    help='K for --bridge mog (default 2)')
+    # SF bridge controls (only used when --bridge schrodinger_follmer)
+    p.add_argument('--sf-blend', type=float, default=0.5,
+                   help='SF: BW-geodesic t in [0,1] between q0 and q1')
+    p.add_argument('--sf-entropy-reg', type=float, default=0.0,
+                   help='SF: Schrödinger entropic regularisation; 0 = exact OT')
+    p.add_argument('--sf-q1-mode', choices=('is', 'annealed'), default='is',
+                   help='SF q1 estimator: is (Path A) or annealed (Path B)')
+    p.add_argument('--sf-annealed-n-stages', type=int, default=3)
+    p.add_argument('--sf-annealed-n-mh-steps', type=int, default=2)
+    p.add_argument('--sf-annealed-proposal-scale', type=float, default=0.4)
+    p.add_argument('--sf-use-q0-cov', action='store_true', default=False,
+                   help='SF: decoupled mode — bridge mean from BW interp, '
+                        'cov from q0 (issue #3 fix)')
     p.add_argument('--sim-only', action='store_true')
     p.add_argument('--show-checkpoint', action='store_true')
     p.add_argument('--scenario-artifact', default=None,
@@ -295,7 +309,16 @@ def _out_dir(seed: int, n_smc: int, bridge_tag: str = '') -> str:
 
 def main():
     args = _parse_args()
-    bridge_tag = '' if args.bridge == 'gaussian' else f'mog{args.bridge_K}'
+    if args.bridge == 'gaussian':
+        bridge_tag = ''
+    elif args.bridge == 'mog':
+        bridge_tag = f'mog{args.bridge_K}'
+    elif args.bridge == 'schrodinger_follmer':
+        mode_tag = 'a' if args.sf_q1_mode == 'annealed' else 'i'
+        cov_tag = 'q' if args.sf_use_q0_cov else ''
+        bridge_tag = f'sf{mode_tag}{cov_tag}{args.sf_blend:.2f}'
+    else:
+        bridge_tag = args.bridge
     if args.scenario_artifact:
         bridge_tag = (bridge_tag + '_psim_artifact').lstrip('_')
     out_dir = _out_dir(args.seed, args.n_smc, bridge_tag)
@@ -322,6 +345,13 @@ def main():
         max_lambda_inc_bridge=0.15,
         bridge_type=args.bridge,
         bridge_mog_components=args.bridge_K,
+        sf_blend=args.sf_blend,
+        sf_entropy_reg=args.sf_entropy_reg,
+        sf_q1_mode=args.sf_q1_mode,
+        sf_annealed_n_stages=args.sf_annealed_n_stages,
+        sf_annealed_n_mh_steps=args.sf_annealed_n_mh_steps,
+        sf_annealed_proposal_scale=args.sf_annealed_proposal_scale,
+        sf_use_q0_cov=args.sf_use_q0_cov,
     )
     WINDOW_BINS = 1 * BINS_PER_DAY        # 96 bins = 1 day
     STRIDE_BINS = BINS_PER_DAY // 2       # 48 bins = 12 hours

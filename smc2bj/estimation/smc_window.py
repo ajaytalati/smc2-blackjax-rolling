@@ -31,6 +31,7 @@ from smc2bj.transforms.unconstrained import log_prior_unconstrained
 from smc2bj.estimation.config import SMCConfig
 from smc2bj.estimation.mass_matrix import estimate_mass_matrix
 from smc2bj.estimation.sampling import sample_from_prior
+from smc2bj.estimation.sf_bridge import fit_sf_base
 
 
 def _kmeans_labels(X: np.ndarray, K: int, n_iter: int = 20,
@@ -228,16 +229,66 @@ def run_smc_window_bridge(new_ld, prev_particles, model, T_arr,
     At lambda=0 the target is q_0 ≈ old posterior (where particles start).
     At lambda=1 the target is new_ld(u) = correct new-window posterior.
 
-    Two base-measure options (cfg.bridge_type):
+    Three base-measure options (cfg.bridge_type):
       - 'gaussian': single Gaussian fit with Ledoit-Wolf shrinkage (default)
       - 'mog':      K-component mixture of Gaussians, K = cfg.bridge_mog_components.
                     Each component full-covariance with per-component LW shrinkage.
                     Weights proportional to K-means cluster sizes.
+      - 'schrodinger_follmer': Bures-Wasserstein geodesic at t=cfg.sf_blend
+                    between the prev-posterior Gaussian fit and an
+                    importance-matched new-posterior Gaussian estimate.
+                    Tightens the bridge by starting closer to π_new.
+                    See smc2bj.estimation.sf_bridge for details.
     """
     prev_np = np.asarray(prev_particles, dtype=np.float64)
     N, d = prev_np.shape
 
-    if cfg.bridge_type == 'mog':
+    if cfg.bridge_type == 'schrodinger_follmer':
+        prev = jnp.array(prev_particles, dtype=jnp.float64)
+        sf_rng = jax.random.PRNGKey(seed + 17)   # offset to decorrelate from outer init key
+        sf = fit_sf_base(
+            prev, new_ld,
+            blend=cfg.sf_blend,
+            entropy_reg=cfg.sf_entropy_reg,
+            q1_mode=cfg.sf_q1_mode,
+            annealed_n_stages=cfg.sf_annealed_n_stages,
+            annealed_n_mh_steps=cfg.sf_annealed_n_mh_steps,
+            annealed_proposal_scale=cfg.sf_annealed_proposal_scale,
+            use_q0_cov=cfg.sf_use_q0_cov,
+            rng_key=sf_rng,
+        )
+        m, L_chol, L_inv, log_det = sf['m'], sf['L_chol'], sf['L_inv'], sf['log_det']
+        const = -0.5 * (d * jnp.log(2.0 * jnp.pi) + log_det)
+
+        # SF diagnostics: print BW endpoint distance + per-mode ESS / acceptance
+        q0_to_q1 = float(jnp.linalg.norm(sf['q1_mean'] - sf['q0_mean']))
+        if sf['q1_mode'] == 'annealed':
+            mode_diag = (f"n_stages={cfg.sf_annealed_n_stages}, "
+                         f"n_mh={cfg.sf_annealed_n_mh_steps}, "
+                         f"min ESS={sf['n_eff']:.1f}/{N}, "
+                         f"MH acc={sf['accept_mean']:.2f}")
+        else:
+            mode_diag = f"IS n_eff={sf['n_eff']:.1f}/{N}"
+        cov_tag = 'q0_cov' if sf['use_q0_cov'] else 'BW_cov'
+        print(f"      SF base ({sf['q1_mode']}/{cov_tag}): blend={sf['blend']:.2f}, "
+              f"entropy_reg={sf['entropy_reg']:.3g}, "
+              f"log_det={float(log_det):.1f}, "
+              f"||m1-m0||={q0_to_q1:.3f}, "
+              f"{mode_diag}",
+              flush=True)
+
+        @jax.jit
+        def logprior_fn(u):
+            diff = u - m
+            maha = jnp.sum((L_inv @ diff) ** 2)
+            return const - 0.5 * maha
+
+        init_key = jax.random.PRNGKey(seed)
+        z = jax.random.normal(init_key, (cfg.n_smc_particles, d),
+                              dtype=jnp.float64)
+        initial_particles = m[None, :] + z @ L_chol.T
+
+    elif cfg.bridge_type == 'mog':
         K = int(cfg.bridge_mog_components)
         log_w_np, mus_np, L_chols_np, L_invs_np, log_dets_np = _fit_mog_bridge(
             prev_np, K=K, seed=seed,
